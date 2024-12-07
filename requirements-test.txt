@@ -22,4 +22,4 @@ timm # required for internvl test
 aiohttp
 
 # quantization
-bitsandbytes==0.42.0
+bitsandbytes==0.45.0
