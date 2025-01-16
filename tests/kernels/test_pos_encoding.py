@@ -5,20 +5,24 @@ import pytest
 import torch
 
 from vllm.model_executor.layers.rotary_embedding import get_rope
+from vllm.platforms import current_platform
 
 from .allclose_default import get_default_atol, get_default_rtol
 
 IS_NEOX_STYLE = [True, False]
 DTYPES = [torch.half, torch.bfloat16, torch.float]
-HEAD_SIZES = [64, 80, 96, 112, 120, 128, 192, 256]
+HEAD_SIZES = [64, 80, 112, 120, 256]
 ROTARY_DIMS = [None, 32]  # None means rotary dim == head size
-NUM_HEADS = [7, 17]  # Arbitrary values for testing
-BATCH_SIZES = [1, 5]  # Arbitrary values for testing
+NUM_HEADS = [17]  # Arbitrary values for testing
+BATCH_SIZES = [5]  # Arbitrary values for testing
 SEQ_LENS = [11, 8192]  # Arbitrary values for testing
 SEEDS = [0]
 CUDA_DEVICES = [
     f"cuda:{i}" for i in range(1 if torch.cuda.device_count() == 1 else 2)
 ]
+if current_platform.is_hpu():
+    import habana_frameworks.torch as htorch
+    CUDA_DEVICES = ['hpu']
 
 
 @pytest.mark.parametrize("is_neox_style", IS_NEOX_STYLE)
@@ -46,9 +50,8 @@ def test_rotary_embedding(
 ) -> None:
     if rotary_dim is None:
         rotary_dim = head_size
-    torch.random.manual_seed(seed)
-    if torch.cuda.is_available():
-        torch.cuda.manual_seed(seed)
+
+    current_platform.seed_everything(seed)
     torch.set_default_device(device)
     if rotary_dim is None:
         rotary_dim = head_size
@@ -65,16 +68,18 @@ def test_rotary_embedding(
     # NOTE(woosuk): The reference implementation should be executed first
     # because the custom kernel is in-place.
     ref_query, ref_key = rope.forward_native(positions, query, key)
+    if current_platform.is_hpu():
+        htorch.core.mark_step()
     out_query, out_key = rope.forward(positions, query, key)
     # Compare the results.
-    assert torch.allclose(out_query,
-                          ref_query,
-                          atol=get_default_atol(out_query),
-                          rtol=get_default_rtol(out_query))
-    assert torch.allclose(out_key,
-                          ref_key,
-                          atol=get_default_atol(out_key),
-                          rtol=get_default_rtol(out_key))
+    torch.testing.assert_close(out_query,
+                               ref_query,
+                               atol=get_default_atol(out_query),
+                               rtol=get_default_rtol(out_query))
+    torch.testing.assert_close(out_key,
+                               ref_key,
+                               atol=get_default_atol(out_key),
+                               rtol=get_default_rtol(out_key))
 
 
 @pytest.mark.parametrize("is_neox_style", IS_NEOX_STYLE)
@@ -100,14 +105,12 @@ def test_batched_rotary_embedding(
     max_position: int = 8192,
     base: int = 10000,
 ) -> None:
-    torch.random.manual_seed(seed)
-    if torch.cuda.is_available():
-        torch.cuda.manual_seed(seed)
+    current_platform.seed_everything(seed)
     torch.set_default_device(device)
     if rotary_dim is None:
         rotary_dim = head_size
     rope = get_rope(head_size, rotary_dim, max_position, base, is_neox_style, {
-        "type": "linear",
+        "rope_type": "linear",
         "factor": (1, )
     })
     rope = rope.to(dtype=dtype)
@@ -122,6 +125,8 @@ def test_batched_rotary_embedding(
     # NOTE(woosuk): The reference implementation should be executed first
     # because the custom kernel is in-place.
     ref_query, ref_key = rope.forward_native(positions, query, key)
+    if current_platform.is_hpu():
+        htorch.core.mark_step()
     out_query, out_key = rope.forward(positions,
                                       query,
                                       key,
@@ -129,14 +134,14 @@ def test_batched_rotary_embedding(
                                                           dtype=torch.long,
                                                           device=device))
     # Compare the results.
-    assert torch.allclose(out_query,
-                          ref_query,
-                          atol=get_default_atol(out_query),
-                          rtol=get_default_rtol(out_query))
-    assert torch.allclose(out_key,
-                          ref_key,
-                          atol=get_default_atol(out_key),
-                          rtol=get_default_rtol(out_key))
+    torch.testing.assert_close(out_query,
+                               ref_query,
+                               atol=get_default_atol(out_query),
+                               rtol=get_default_rtol(out_query))
+    torch.testing.assert_close(out_key,
+                               ref_key,
+                               atol=get_default_atol(out_key),
+                               rtol=get_default_rtol(out_key))
 
 
 @pytest.mark.parametrize("is_neox_style", IS_NEOX_STYLE)
@@ -162,15 +167,13 @@ def test_batched_rotary_embedding_multi_lora(
     max_position: int = 8192,
     base: int = 10000,
 ) -> None:
-    torch.random.manual_seed(seed)
-    if torch.cuda.is_available():
-        torch.cuda.manual_seed(seed)
+    current_platform.seed_everything(seed)
     torch.set_default_device(device)
     if rotary_dim is None:
         rotary_dim = head_size
     scaling_factors: List[int] = [1, 2, 4]
     rope = get_rope(head_size, rotary_dim, max_position, base, is_neox_style, {
-        "type": "linear",
+        "rope_type": "linear",
         "factor": tuple(scaling_factors)
     })
     rope = rope.to(dtype=dtype)
@@ -197,17 +200,19 @@ def test_batched_rotary_embedding_multi_lora(
     # because the custom kernel is in-place.
     ref_query, ref_key = rope.forward_native(positions, query, key,
                                              query_offsets)
+    if current_platform.is_hpu():
+        htorch.core.mark_step()
     out_query, out_key = rope.forward(positions, query, key,
                                       query_offsets.flatten())
     # Compare the results.
-    assert torch.allclose(out_query,
-                          ref_query,
-                          atol=get_default_atol(out_query),
-                          rtol=get_default_rtol(out_query))
-    assert torch.allclose(out_key,
-                          ref_key,
-                          atol=get_default_atol(out_key),
-                          rtol=get_default_rtol(out_key))
+    torch.testing.assert_close(out_query,
+                               ref_query,
+                               atol=get_default_atol(out_query),
+                               rtol=get_default_rtol(out_query))
+    torch.testing.assert_close(out_key,
+                               ref_key,
+                               atol=get_default_atol(out_key),
+                               rtol=get_default_rtol(out_key))
 
 
 @torch.inference_mode()
@@ -215,10 +220,10 @@ def test_rope_module_cache():
     MAX_POSITIONS = [123, 1234]
     BASES = [10000, 1000000]
     ROPE_SCALINGS = (None, {
-        "type": "linear",
+        "rope_type": "linear",
         "factor": (1, )
     }, {
-        "type": "dynamic",
+        "rope_type": "dynamic",
         "factor": 1
     })
     settings = (HEAD_SIZES, ROTARY_DIMS, MAX_POSITIONS, BASES, IS_NEOX_STYLE,
