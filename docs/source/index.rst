@@ -31,8 +31,10 @@ vLLM is fast with:
 * Efficient management of attention key and value memory with **PagedAttention**
 * Continuous batching of incoming requests
 * Fast model execution with CUDA/HIP graph
-* Quantization: `GPTQ <https://arxiv.org/abs/2210.17323>`_, `AWQ <https://arxiv.org/abs/2306.00978>`_, `SqueezeLLM <https://arxiv.org/abs/2306.07629>`_, FP8 KV Cache
-* Optimized CUDA kernels
+* Quantization: `GPTQ <https://arxiv.org/abs/2210.17323>`_, `AWQ <https://arxiv.org/abs/2306.00978>`_, INT4, INT8, and FP8
+* Optimized CUDA kernels, including integration with FlashAttention and FlashInfer.
+* Speculative decoding
+* Chunked prefill
 
 vLLM is flexible and easy to use with:
 
@@ -41,10 +43,9 @@ vLLM is flexible and easy to use with:
 * Tensor parallelism and pipeline parallelism support for distributed inference
 * Streaming outputs
 * OpenAI-compatible API server
-* Support NVIDIA GPUs and AMD GPUs
-* (Experimental) Support for Intel® Gaudi® 2 accelerators
-* (Experimental) Prefix caching support
-* (Experimental) Multi-lora support
+* Support NVIDIA GPUs, AMD CPUs and GPUs, Intel CPUs, Gaudi® accelerators and GPUs, PowerPC CPUs, TPU, and AWS Trainium and Inferentia Accelerators.
+* Prefix caching support
+* Multi-lora support
 
 For more information, check out the following:
 
@@ -52,7 +53,6 @@ For more information, check out the following:
 * `vLLM paper <https://arxiv.org/abs/2309.06180>`_ (SOSP 2023)
 * `How continuous batching enables 23x throughput in LLM inference while reducing p50 latency <https://www.anyscale.com/blog/continuous-batching-llm-inference>`_ by Cade Daniel et al.
 * :ref:`vLLM Meetups <meetups>`.
-
 
 
 Documentation
@@ -80,12 +80,15 @@ Documentation
 
    serving/openai_compatible_server
    serving/deploying_with_docker
+   serving/deploying_with_k8s
+   serving/deploying_with_nginx
    serving/distributed_serving
    serving/metrics
    serving/env_vars
    serving/usage_stats
    serving/integrations
    serving/tensorizer
+   serving/compatibility_matrix
    serving/faq
 
 .. toctree::
@@ -108,6 +111,8 @@ Documentation
    quantization/supported_hardware
    quantization/auto_awq
    quantization/bnb
+   quantization/gguf
+   quantization/int8
    quantization/fp8
    quantization/fp8_e5m2_kvcache
    quantization/fp8_e4m3_kvcache
@@ -121,21 +126,11 @@ Documentation
 
 .. toctree::
    :maxdepth: 1
-   :caption: Performance benchmarks
+   :caption: Performance
 
-   performance_benchmark/benchmarks
+   performance/benchmarks
 
-.. toctree::
-   :maxdepth: 2
-   :caption: Developer Documentation
-
-   dev/sampling_params
-   dev/offline_inference/offline_index
-   dev/engine/engine_index
-   dev/kernel/paged_attention
-   dev/input_processing/model_inputs_index
-   dev/multimodal/multimodal_index
-   dev/dockerfile/dockerfile
+.. Community: User community resources
 
 .. toctree::
    :maxdepth: 1
@@ -143,6 +138,40 @@ Documentation
 
    community/meetups
    community/sponsors
+
+.. API Documentation: API reference aimed at vllm library usage
+
+.. toctree::
+   :maxdepth: 2
+   :caption: API Documentation
+
+   dev/sampling_params
+   dev/pooling_params
+   dev/offline_inference/offline_index
+   dev/engine/engine_index
+
+.. Design: docs about vLLM internals
+
+.. toctree::
+   :maxdepth: 2
+   :caption: Design
+
+   design/class_hierarchy
+   design/huggingface_integration
+   design/plugin_system
+   design/input_processing/model_inputs_index
+   design/kernel/paged_attention
+   design/multimodal/multimodal_index
+
+.. For Developers: contributing to the vLLM project
+
+.. toctree::
+   :maxdepth: 2
+   :caption: For Developers
+
+   contributing/overview
+   contributing/profiling/profiling_index
+   contributing/dockerfile/dockerfile
 
 Indices and tables
 ==================

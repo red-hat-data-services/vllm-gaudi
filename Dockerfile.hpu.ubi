@@ -1,10 +1,10 @@
-ARG BASE_IMAGE=vault.habana.ai/gaudi-docker/1.18.0/rhel9.4/habanalabs/pytorch-installer-2.4.0:1.18.0-524
+ARG BASE_IMAGE=vault.habana.ai/gaudi-docker/1.19.1/rhel9.4/habanalabs/pytorch-installer-2.5.1:1.19.1-26
 FROM ${BASE_IMAGE} as habana-base
 
 USER root
 
 ENV VLLM_TARGET_DEVICE="hpu"
-ENV HABANA_SOFTWARE_VERSION="1.18.0-524"
+ENV HABANA_SOFTWARE_VERSION="1.19.1-26"
 
 RUN dnf -y update --best --allowerasing --skip-broken && dnf clean all
 
@@ -19,7 +19,7 @@ ENV VIRTUAL_ENV=/opt/vllm
 ENV PATH="$VIRTUAL_ENV/bin:$PATH"
 RUN dnf install -y --setopt=install_weak_deps=0 --nodocs \
     python${PYTHON_VERSION}-devel python${PYTHON_VERSION}-pip python${PYTHON_VERSION}-wheel && \
-    python${PYTHON_VERSION} -m venv $VIRTUAL_ENV --system-site-packages && pip install --no-cache -U pip wheel && dnf clean all
+    python${PYTHON_VERSION} -m venv $VIRTUAL_ENV --system-site-packages && pip install --no-cache -U pip wheel setuptools && dnf clean all
 
 ## Python Habana base #################################################################
 FROM python-install as python-habana-base
@@ -82,12 +82,14 @@ RUN dnf install -y --setopt=install_weak_deps=0 --nodocs gcc \
 # install vllm wheel first, so that torch etc will be installed
 RUN --mount=type=bind,from=build,src=/workspace/dist,target=/workspace/dist \
     --mount=type=cache,target=/root/.cache/pip \
-    pip install $(echo dist/*.whl)'[tensorizer]' --verbose
+    pip install $(echo dist/*.whl)'[tensorizer]' "jinja2>=3.1.5" --verbose
 
 ENV HF_HUB_OFFLINE=1 \
     PORT=8000 \
     HOME=/home/vllm \
-    VLLM_USAGE_SOURCE=production-docker-image
+    VLLM_USAGE_SOURCE=production-docker-image \
+    VLLM_NO_USAGE_STATS=1 \
+    PT_HPU_MAX_COMPOUND_OP_SIZE=10
 
 # setup non-root user for OpenShift
 RUN umask 002 \
@@ -95,6 +97,9 @@ RUN umask 002 \
     && chmod g+rwx $HOME /usr/src /workspace
 
 COPY LICENSE /licenses/vllm.md
+
+# Copy only .jinja files from example directory to template directory
+COPY examples/*.jinja /app/data/template/
 
 USER 2000
 ENTRYPOINT ["python3", "-m", "vllm.entrypoints.openai.api_server"]
@@ -105,7 +110,7 @@ USER root
 
 RUN --mount=type=cache,target=/root/.cache/pip \
     --mount=type=bind,from=build,src=/workspace/dist,target=/workspace/dist \
-    pip install $(echo dist/*.whl)'[tensorizer]' vllm-tgis-adapter==0.2.3
+    pip install $(echo dist/*.whl)'[tensorizer]' vllm-tgis-adapter==0.6.1
 
 ENV GRPC_PORT=8033 \
     PORT=8000 \

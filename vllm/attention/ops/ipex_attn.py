@@ -10,7 +10,7 @@ class PagedAttention:
 
     @staticmethod
     def get_supported_head_sizes() -> List[int]:
-        return [64, 80, 96, 112, 128, 256]
+        return [32, 64, 80, 96, 112, 128, 256]
 
     @staticmethod
     def get_kv_cache_shape(
@@ -90,6 +90,7 @@ class PagedAttention:
         query: torch.Tensor,
         key: torch.Tensor,
         value: torch.Tensor,
+        kv_cache_dtype: str,
         key_cache: torch.Tensor,
         value_cache: torch.Tensor,
         block_tables: torch.Tensor,

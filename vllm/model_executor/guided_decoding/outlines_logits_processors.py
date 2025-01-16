@@ -18,9 +18,11 @@ import json
 import math
 from collections import defaultdict
 from functools import lru_cache
-from typing import Callable, DefaultDict, Dict, List, Union
+from typing import Any, Callable, DefaultDict, Dict, List, Union
 
 import torch
+from lark import Lark
+from outlines import grammars
 from outlines.caching import cache
 from outlines.fsm.guide import CFGGuide, Generate, Guide, RegexGuide, Write
 from outlines.fsm.json_schema import build_regex_from_schema
@@ -28,11 +30,48 @@ from pydantic import BaseModel
 from transformers import PreTrainedTokenizerBase
 
 
+# Unfortunately we cannot use lru_cache as it breaks pickling
+# so we use a simpler implementation
+def _cached(fn):
+    cache: Dict[Any, Any] = {}
+
+    def cached_fn(*args):
+        if args in cache:
+            result = cache[args]
+        else:
+            result = fn(*args)
+            cache[args] = result
+        return result
+
+    return cached_fn
+
+
 class BaseLogitsProcessor:
 
     def __init__(self, guide: Guide):
         self._guide: Guide = guide
         self._fsm_state: DefaultDict[int, int] = defaultdict(int)
+        self._cached_get_mask_tensor = _cached(self._get_mask_tensor)
+
+    @staticmethod
+    @lru_cache(maxsize=128)
+    def _create_mask_tensor(allowed_tokens, vocab_size, device):
+        mask = torch.full((vocab_size, ), -math.inf, device=device)
+        mask[list(allowed_tokens)] = 0
+        return mask
+
+    def _get_mask_tensor(self, state_id, vocab_size, device):
+        instruction = self._guide.get_next_instruction(state=state_id)
+        if type(instruction) == Generate:  # noqa: E721
+            allowed_tokens = instruction.tokens
+        elif type(instruction) == Write:  # noqa: E721
+            # TODO: support fast forward tokens
+            allowed_tokens = [instruction.tokens[0]]
+        else:
+            raise TypeError(
+                f"Unsupported instruction type {type(instruction)}")
+        return BaseLogitsProcessor._create_mask_tensor(tuple(allowed_tokens),
+                                                       vocab_size, device)
 
     def __call__(self, input_ids: List[int],
                  scores: torch.Tensor) -> torch.Tensor:
@@ -44,24 +83,28 @@ class BaseLogitsProcessor:
             last_seq_id = hash(tuple(input_ids[:-1]))
             self._fsm_state[seq_id] = self._guide.get_next_state(
                 state=self._fsm_state[last_seq_id], token_id=last_token)
-
-        instruction = self._guide.get_next_instruction(
-            state=self._fsm_state[seq_id])
-
-        if type(instruction) == Generate:
-            allowed_tokens = instruction.tokens
-        elif type(instruction) == Write:
-            # TODO: support fast forward tokens
-            allowed_tokens = [instruction.tokens[0]]
         else:
-            raise TypeError(
-                f"Unsupported instruction type {type(instruction)}")
+            # Note: this is a hack.
+            # Lark pickling does not work properly (silent failure),
+            # which breaks the RPC (which uses python pickleing).
+            # We need to find a better solution.
+            # On the first time this is called, we simply re-create
+            # the Lark object.
+            if isinstance(self._guide, CFGGuide):
+                self._guide.parser = Lark(
+                    self._guide.cfg_string,
+                    parser="lalr",
+                    lexer="contextual",
+                    propagate_positions=False,
+                    maybe_placeholders=False,
+                    regex=True,
+                    import_paths=[grammars.GRAMMAR_PATH],
+                )
 
-        mask = torch.full((scores.shape[-1], ),
-                          -math.inf,
-                          device=scores.device)
-        mask[allowed_tokens] = 0
-        scores = scores.add(mask)
+        state_id = self._fsm_state[seq_id]
+        mask = self._cached_get_mask_tensor(state_id, scores.size(-1),
+                                            scores.device)
+        scores.add_(mask)
         return scores
 
 

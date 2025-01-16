@@ -1,9 +1,7 @@
-from multiprocessing import Process
 from typing import List
 
-from conftest import cleanup
-
 import vllm
+from vllm.distributed import cleanup_dist_env_and_memory
 from vllm.lora.request import LoRARequest
 
 MODEL_PATH = "meta-llama/Llama-2-7b-hf"
@@ -74,27 +72,16 @@ def _test_llama_lora(sql_lora_files, tp_size):
     assert do_sample(llm, sql_lora_files, lora_id=2) == expected_lora_output
 
     print("removing lora")
-    cleanup()
+    cleanup_dist_env_and_memory()
 
 
 def test_llama_lora_1x(sql_lora_files):
-    p = Process(target=_test_llama_lora, args=(sql_lora_files, 1))
-    p.start()
-    p.join()
-    assert p.exitcode == 0
+    _test_llama_lora(sql_lora_files, 1)
 
 
 def test_llama_lora_2x(sql_lora_files):
-    # Work-around to resolve stalling issue in multi-card scenario
-    p = Process(target=_test_llama_lora, args=(sql_lora_files, 2))
-    p.start()
-    p.join()
-    assert p.exitcode == 0
+    _test_llama_lora(sql_lora_files, 2)
 
 
 def test_llama_lora_4x(sql_lora_files):
-    # Work-around to resolve stalling issue in multi-card scenario
-    p = Process(target=_test_llama_lora, args=(sql_lora_files, 4))
-    p.start()
-    p.join()
-    assert p.exitcode == 0
+    _test_llama_lora(sql_lora_files, 4)

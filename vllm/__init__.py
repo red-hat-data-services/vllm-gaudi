@@ -1,25 +1,29 @@
 """vLLM: a high-throughput and memory-efficient inference engine for LLMs"""
+from vllm.utils import is_fake_hpu, migrate_to_cpu
+
+if is_fake_hpu():
+    migrate_to_cpu()
 
 from vllm.engine.arg_utils import AsyncEngineArgs, EngineArgs
 from vllm.engine.async_llm_engine import AsyncLLMEngine
 from vllm.engine.llm_engine import LLMEngine
 from vllm.entrypoints.llm import LLM
 from vllm.executor.ray_utils import initialize_ray_cluster
-from vllm.inputs import PromptInputs, TextPrompt, TokensPrompt
+from vllm.inputs import PromptType, TextPrompt, TokensPrompt
 from vllm.model_executor.models import ModelRegistry
 from vllm.outputs import (CompletionOutput, EmbeddingOutput,
                           EmbeddingRequestOutput, RequestOutput)
 from vllm.pooling_params import PoolingParams
 from vllm.sampling_params import SamplingParams
 
-from .version import __commit__, __version__
+from .version import __version__, __version_tuple__
 
 __all__ = [
-    "__commit__",
     "__version__",
+    "__version_tuple__",
     "LLM",
     "ModelRegistry",
-    "PromptInputs",
+    "PromptType",
     "TextPrompt",
     "TokensPrompt",
     "SamplingParams",
