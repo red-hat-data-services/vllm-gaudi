@@ -880,8 +880,6 @@ def create_lora_manager(
     """Create a LoRA adapter for a given model."""
     if not hasattr(model, "supported_lora_modules"):
         raise ValueError(f"Model {type(model)} is not supported for LoRA.")
-    if is_hpu():
-        max_num_batched_tokens = 3 * max_num_batched_tokens
     lora_manager = lora_manager_cls(
         model=model,
         max_num_seqs=max_num_seqs,

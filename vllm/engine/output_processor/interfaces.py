@@ -36,9 +36,7 @@ class SequenceGroupOutputProcessor(ABC):
         This returns a single-step output processor if num_lookahead_slots is
         zero, else returns a multi-step output processor.
         """
-        if (scheduler_config.num_lookahead_slots == 0
-                or (scheduler_config.num_lookahead_slots == 1
-                    and scheduler_config.enable_delayed_sampling)):
+        if scheduler_config.num_lookahead_slots == 0:
             # Importing here to avoid cycle.
             from vllm.engine.output_processor.single_step import (
                 SingleStepOutputProcessor)

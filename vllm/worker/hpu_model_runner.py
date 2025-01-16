@@ -673,12 +673,6 @@ class HPUModelRunnerBase(ModelRunnerBase[TModelInputForHPU]):
                 hidden_layer_markstep_interval)
             torch.hpu.synchronize()
 
-            if self.scheduler_config.enable_delayed_sampling:
-                self.model.sampler.include_gpu_probs_tensor = True
-                self.model.sampler.sample_token_positions_only = True
-
-            # FIXME: Running with disable_tensor_cache=True causes
-            # RuntimeErrors. This needs to be debugged
             with HabanaMemoryProfiler() as m_wrap:
                 self.model = _maybe_wrap_in_hpu_graph(
                     self.model,
@@ -967,9 +961,7 @@ class HPUModelRunnerBase(ModelRunnerBase[TModelInputForHPU]):
                     generation_token = seq_data.get_last_token_id()
                     input_tokens.append([generation_token])
 
-                seq_len = ((seq_data.get_num_computed_tokens() +
-                            1) if self.scheduler_config.enable_delayed_sampling
-                           else seq_data.get_len())
+                seq_len = seq_data.get_len()
                 position = seq_len - 1
                 input_positions.append([position])
 
@@ -1240,8 +1232,7 @@ class HPUModelRunnerBase(ModelRunnerBase[TModelInputForHPU]):
             "num_prefills": num_prefills,
             "batch_type": batch_type,
             "seq_lens": seq_lens,
-            "query_lens": query_lens,
-            "seq_group_metadata_list": seq_group_metadata_list,
+            "query_lens": query_lens
         }
         if prefill_attn_metadata is not None:
             metadata_dict.update(prefill_attn_metadata.asdict_zerocopy())

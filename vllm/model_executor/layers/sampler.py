@@ -302,7 +302,6 @@ class Sampler(nn.Module):
             sampling_tensors,
             include_gpu_probs_tensor=self.include_gpu_probs_tensor,
             modify_greedy_probs=self._should_modify_greedy_probs_inplace,
-            token_positions_only=self.sample_token_positions_only,
         )
 
         if self.include_gpu_probs_tensor:
@@ -589,7 +588,6 @@ def _apply_min_p(
 def _greedy_sample(
     selected_seq_groups: List[SequenceGroupToSample],
     samples: torch.Tensor,
-    token_positions_only: bool = False,
 ) -> SampleResultType:
     """Run greedy sampling on a given samples.
 
@@ -603,8 +601,7 @@ def _greedy_sample(
         same as the length of selected_seq_groups. If the corresponding
         seq_group has do_sample=False, tuple contains ([], [])
     """
-    if not token_positions_only:
-        samples_lst = samples.tolist()
+    samples_lst = samples.tolist()
     sample_idx = 0
     results: SampleResultType = []
     for seq_group in selected_seq_groups:
@@ -617,9 +614,7 @@ def _greedy_sample(
         assert num_parent_seqs == 1, (
             "Greedy sampling should have only one seq.")
         parent_ids = list(range(num_parent_seqs))
-        next_token_ids = [
-            sample_idx if token_positions_only else samples_lst[sample_idx]
-        ]
+        next_token_ids = [samples_lst[sample_idx]]
         results.append((next_token_ids, parent_ids))
         sample_idx += num_parent_seqs
     return results
@@ -1015,7 +1010,6 @@ def _sample(
         sampling_tensors,
         include_gpu_probs_tensor=include_gpu_probs_tensor,
         modify_greedy_probs=modify_greedy_probs,
-        token_positions_only=token_positions_only,
     )
 
 
