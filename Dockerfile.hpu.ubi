@@ -89,7 +89,6 @@ ENV HF_HUB_OFFLINE=1 \
     HOME=/home/vllm \
     VLLM_USAGE_SOURCE=production-docker-image \
     VLLM_NO_USAGE_STATS=1 \
-    VLLM_SKIP_WARMUP=true \
     PT_HPU_MAX_COMPOUND_OP_SIZE=10
 
 # setup non-root user for OpenShift
