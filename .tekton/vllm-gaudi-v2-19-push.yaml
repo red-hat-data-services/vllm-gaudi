@@ -13,7 +13,7 @@ metadata:
       && ( !".tekton/**".pathChanged() || ".tekton/vllm-gaudi-v2-19-push.yaml".pathChanged() )
   creationTimestamp: null
   labels:
-    appstudio.openshift.io/application: rhoai-v2-19
+    appstudio.openshift.io/application: external-rhoai-v2-19
     appstudio.openshift.io/component: vllm-gaudi-v2-19
     pipelines.appstudio.openshift.io/type: build
   name: vllm-gaudi-v2-19-on-push
