@@ -1,5 +1,5 @@
 from functools import partial
-from typing import Any, Dict, Iterable, List, Optional, Set, Tuple, Union
+from typing import Any, Dict, Iterable, List, Optional, Set, Tuple, Type, Union
 
 import torch
 from torch import nn
@@ -18,16 +18,18 @@ from vllm.model_executor.layers.linear import (MergedColumnParallelLinear,
                                                QKVParallelLinear,
                                                RowParallelLinear)
 from vllm.model_executor.layers.logits_processor import LogitsProcessor
+from vllm.model_executor.layers.pooler import Pooler, PoolingType
 from vllm.model_executor.layers.quantization import QuantizationConfig
 from vllm.model_executor.layers.rotary_embedding import get_rope
 from vllm.model_executor.layers.sampler import SamplerOutput, get_sampler
 from vllm.model_executor.layers.vocab_parallel_embedding import (
     ParallelLMHead, VocabParallelEmbedding)
 from vllm.model_executor.model_loader.weight_utils import default_weight_loader
+from vllm.model_executor.pooling_metadata import PoolingMetadata
 from vllm.model_executor.sampling_metadata import SamplingMetadata
-from vllm.sequence import IntermediateTensors
+from vllm.sequence import IntermediateTensors, PoolerOutput
 
-from .interfaces import SupportsPP
+from .interfaces import SupportsLoRA, SupportsPP
 from .utils import (is_pp_missing_parameter,
                     make_empty_intermediate_tensors_factory, make_layers,
                     maybe_prefix)
@@ -144,7 +146,9 @@ class InternLM2Attention(nn.Module):
         )
 
     def split_qkv(self, qkv: torch.Tensor):
-        seq_len = qkv.shape[0]
+        # Unpack all dimensions except the last one
+        *batch_dims, _ = qkv.shape
+
         if self.tp_size > 1:
             qkv_map = [self.q_size, self.kv_size, self.kv_size] * self.tp_size
             qkv = tensor_model_parallel_all_gather(qkv)
@@ -152,12 +156,15 @@ class InternLM2Attention(nn.Module):
             qkv = qkv[::3] + qkv[1::3] + qkv[2::3]
             qkv = torch.cat(qkv, dim=-1)
 
-        qkv = qkv.view(seq_len, self.total_num_kv_heads,
+        qkv = qkv.contiguous()
+
+        # Dynamically reshape based on the number of batch dimensions
+        qkv = qkv.view(*batch_dims, self.total_num_kv_heads,
                        self.key_value_groups + 2, self.head_dim)
         q, k, v = torch.split(qkv, [self.key_value_groups, 1, 1], dim=-2)
-        q = q.reshape(seq_len, self.q_size * self.tp_size)
-        k = k.reshape(seq_len, self.kv_size * self.tp_size)
-        v = v.reshape(seq_len, self.kv_size * self.tp_size)
+        q = q.view(*batch_dims, self.q_size * self.tp_size)
+        k = k.view(*batch_dims, self.kv_size * self.tp_size)
+        v = v.view(*batch_dims, self.kv_size * self.tp_size)
 
         if self.tp_size > 1:
             splitter = partial(split_tensor_along_last_dim,
@@ -165,6 +172,7 @@ class InternLM2Attention(nn.Module):
             q = splitter(q)[self.tp_rank]
             k = splitter(k)[self.tp_rank]
             v = splitter(v)[self.tp_rank]
+
         return q, k, v
 
     def forward(
@@ -250,7 +258,12 @@ class InternLMDecoderLayer(nn.Module):
 @support_torch_compile
 class InternLM2Model(nn.Module):
 
-    def __init__(self, *, vllm_config: VllmConfig, prefix: str = ""):
+    def __init__(
+            self,
+            *,
+            vllm_config: VllmConfig,
+            prefix: str = "",
+            layer_type: Type[InternLMDecoderLayer] = InternLMDecoderLayer):
         super().__init__()
 
         config = vllm_config.model_config.hf_config
@@ -266,7 +279,7 @@ class InternLM2Model(nn.Module):
         )
         self.start_layer, self.end_layer, self.layers = make_layers(
             config.num_hidden_layers,
-            lambda prefix: InternLMDecoderLayer(
+            lambda prefix: layer_type(
                 config, cache_config, quant_config, prefix=prefix),
             prefix=f"{prefix}.layers")
         self.norm = RMSNorm(config.hidden_size, eps=config.rms_norm_eps)
@@ -314,16 +327,38 @@ class InternLM2Model(nn.Module):
         return hidden_states
 
 
-class InternLM2ForCausalLM(nn.Module, SupportsPP):
+class InternLM2ForCausalLM(nn.Module, SupportsPP, SupportsLoRA):
+    packed_modules_mapping = {
+        "wqkv": ["wqkv"],
+        "gate_up_proj": ["w1", "w3"],
+    }
 
-    def __init__(self, *, vllm_config: VllmConfig, prefix: str = ""):
+    # LoRA specific attributes
+    supported_lora_modules = [
+        "wqkv",
+        "wo",
+        "gate_up_proj",
+        "w2",
+    ]
+    embedding_modules = {}
+    embedding_padding_modules = []
+
+    def __init__(self,
+                 *,
+                 vllm_config: VllmConfig,
+                 prefix: str = "",
+                 model_type: Type[InternLM2Model] = InternLM2Model):
         super().__init__()
         config = vllm_config.model_config.hf_config
         quant_config = vllm_config.quant_config
+        lora_config = vllm_config.lora_config
+
         self.config = config
         self.quant_config = quant_config
-        self.model = InternLM2Model(vllm_config=vllm_config,
-                                    prefix=maybe_prefix(prefix, "model"))
+        self.lora_config = lora_config
+
+        self.model = model_type(vllm_config=vllm_config,
+                                prefix=maybe_prefix(prefix, "model"))
         self.output = ParallelLMHead(config.vocab_size,
                                      config.hidden_size,
                                      quant_config=quant_config,
@@ -406,3 +441,59 @@ class InternLM2ForCausalLM(nn.Module, SupportsPP):
                 weight_loader(param, loaded_weight)
             loaded_params.add(name)
         return loaded_params
+
+
+class InternLM2ForRewardModel(InternLM2ForCausalLM):
+
+    def __init__(
+        self,
+        *,
+        vllm_config: VllmConfig,
+        prefix: str = "",
+        model_type: Type[InternLM2Model] = InternLM2Model,
+    ):
+        super().__init__(vllm_config=vllm_config,
+                         prefix=prefix,
+                         model_type=model_type)
+
+        for attr in ("output", "logits_processor", "sampler"):
+            delattr(self, attr)
+
+        config = vllm_config.model_config.hf_config
+        self.v_head = RowParallelLinear(
+            config.hidden_size,
+            1,
+            bias=False,
+            input_is_parallel=False,
+            prefix=maybe_prefix(prefix, "v_head"),
+        )
+
+        pooler_config = vllm_config.model_config.pooler_config
+        self._pooler = Pooler.from_config_with_defaults(
+            pooler_config,
+            pooling_type=PoolingType.ALL,
+            normalize=False,
+            softmax=False,
+        )
+
+    def forward(
+        self,
+        input_ids: torch.Tensor,
+        positions: torch.Tensor,
+        kv_caches: List[torch.Tensor],
+        attn_metadata: AttentionMetadata,
+        intermediate_tensors: Optional[IntermediateTensors] = None,
+        inputs_embeds: Optional[torch.Tensor] = None,
+    ) -> Union[torch.Tensor, IntermediateTensors]:
+        hidden_states = self.model(input_ids, positions, kv_caches,
+                                   attn_metadata, intermediate_tensors,
+                                   inputs_embeds)
+        logits, _ = self.v_head(hidden_states)
+        return logits
+
+    def pooler(
+        self,
+        hidden_states: torch.Tensor,
+        pooling_metadata: PoolingMetadata,
+    ) -> Optional[PoolerOutput]:
+        return self._pooler(hidden_states, pooling_metadata)

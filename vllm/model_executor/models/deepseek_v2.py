@@ -45,14 +45,18 @@ from vllm.model_executor.layers.rotary_embedding import get_rope
 from vllm.model_executor.layers.sampler import SamplerOutput, get_sampler
 from vllm.model_executor.layers.vocab_parallel_embedding import (
     ParallelLMHead, VocabParallelEmbedding)
-from vllm.model_executor.model_loader.weight_utils import default_weight_loader
+from vllm.model_executor.model_loader.weight_utils import (
+    default_weight_loader, maybe_remap_kv_scale_name)
 from vllm.model_executor.sampling_metadata import SamplingMetadata
+from vllm.platforms import current_platform
 from vllm.sequence import IntermediateTensors
 
 from .interfaces import SupportsPP
 from .utils import (PPMissingLayer, is_pp_missing_parameter,
                     make_empty_intermediate_tensors_factory, make_layers,
                     maybe_prefix)
+
+is_hpu = current_platform.is_hpu()
 
 
 class DeepseekV2MLP(nn.Module):
@@ -111,18 +115,30 @@ class DeepseekV2MoE(nn.Module):
         if config.hidden_act != "silu":
             raise ValueError(f"Unsupported activation: {config.hidden_act}. "
                              "Only silu is supported for now.")
-
-        self.experts = FusedMoE(num_experts=config.n_routed_experts,
-                                top_k=config.num_experts_per_tok,
-                                hidden_size=config.hidden_size,
-                                intermediate_size=config.moe_intermediate_size,
-                                reduce_results=False,
-                                renormalize=config.norm_topk_prob,
-                                quant_config=quant_config,
-                                use_grouped_topk=True,
-                                num_expert_group=config.n_group,
-                                topk_group=config.topk_group,
-                                prefix=f"{prefix}.experts")
+        if is_hpu:
+            self.experts = FusedMoE(
+                num_experts=config.n_routed_experts,
+                top_k=config.num_experts_per_tok,
+                hidden_size=config.hidden_size,
+                intermediate_size=config.moe_intermediate_size,
+                reduce_results=False,
+                renormalize=config.norm_topk_prob,
+                quant_config=quant_config,
+                use_grouped_topk=False,
+                prefix=f"{prefix}.experts")
+        else:
+            self.experts = FusedMoE(
+                num_experts=config.n_routed_experts,
+                top_k=config.num_experts_per_tok,
+                hidden_size=config.hidden_size,
+                intermediate_size=config.moe_intermediate_size,
+                reduce_results=False,
+                renormalize=config.norm_topk_prob,
+                quant_config=quant_config,
+                use_grouped_topk=True,
+                num_expert_group=config.n_group,
+                topk_group=config.topk_group,
+                prefix=f"{prefix}.experts")
 
         self.gate = ReplicatedLinear(config.hidden_size,
                                      config.n_routed_experts,
@@ -243,7 +259,11 @@ class DeepseekV2Attention(nn.Module):
                                         bias=False,
                                         quant_config=quant_config,
                                         prefix=f"{prefix}.o_proj")
-        rope_scaling["rope_type"] = 'deepseek_yarn'
+        if rope_scaling:
+            rope_scaling["rope_type"] = 'deepseek_yarn'
+            self.use_normal_rope = False
+        else:
+            self.use_normal_rope = True
         self.rotary_emb = get_rope(qk_rope_head_dim,
                                    rotary_dim=qk_rope_head_dim,
                                    max_position=max_position_embeddings,
@@ -257,18 +277,13 @@ class DeepseekV2Attention(nn.Module):
             mscale = yarn_get_mscale(scaling_factor, float(mscale_all_dim))
             self.scaling = self.scaling * mscale * mscale
 
-        # self.attn = Attention(self.num_heads,
-        #                       self.qk_head_dim,
-        #                       self.scaling,
-        #                       num_kv_heads=self.num_heads)
-
-        # TODO, support head_size 192
         self.attn = Attention(self.num_local_heads,
-                              256,
+                              self.qk_head_dim,
                               self.scaling,
                               num_kv_heads=self.num_local_heads,
                               cache_config=cache_config,
-                              quant_config=quant_config)
+                              quant_config=quant_config,
+                              prefix=f"{prefix}.attn")
 
     def forward(
         self,
@@ -277,9 +292,22 @@ class DeepseekV2Attention(nn.Module):
         kv_cache: torch.Tensor,
         attn_metadata: AttentionMetadata,
     ) -> torch.Tensor:
+        if is_hpu:
+            # need reshape from tensor(x0, y0) to tensor(x1) for hpu
+            _batch_size = positions.shape[0]
+            positions = positions.reshape(positions.shape[0] *
+                                          positions.shape[1])
+            hidden_states = hidden_states.reshape(
+                hidden_states.shape[0] * hidden_states.shape[1],
+                hidden_states.shape[2])
         if self.q_lora_rank is not None:
-            q = self.q_a_proj(hidden_states)[0]
-            q = self.q_a_layernorm(q)
+            if is_hpu:
+                # w/a of SW-208144
+                q = self.q_a_proj(hidden_states)[0].unsqueeze(0)
+                q = self.q_a_layernorm(q).squeeze(0)
+            else:
+                q = self.q_a_proj(hidden_states)[0]
+                q = self.q_a_layernorm(q)
             q = self.q_b_proj(q)[0].view(-1, self.num_local_heads,
                                          self.qk_head_dim)
         else:
@@ -291,31 +319,56 @@ class DeepseekV2Attention(nn.Module):
         kv_a, _ = latent_cache.split(
             [self.kv_lora_rank, self.qk_rope_head_dim], dim=-1)
         latent_cache = latent_cache.unsqueeze(1)
-        kv_a = self.kv_a_layernorm(kv_a.contiguous())
+        if is_hpu:
+            kv_a = self.kv_a_layernorm(kv_a.contiguous().unsqueeze(0)).squeeze(
+                0)  # w/a of SW-208144
+        else:
+            kv_a = self.kv_a_layernorm(kv_a.contiguous())
         kv = self.kv_b_proj(kv_a)[0]
         kv = kv.view(-1, self.num_local_heads,
                      self.qk_nope_head_dim + self.v_head_dim)
         k_nope, v = kv.split([self.qk_nope_head_dim, self.v_head_dim], dim=-1)
         k_pe = latent_cache[:, :, self.kv_lora_rank:]
+
+        if self.use_normal_rope:
+            seq_len = positions.size(0)
+            ori_q_pe_shape, ori_k_pe_shape = q_pe.shape, k_pe.shape
+            q_pe = q_pe.reshape(seq_len, -1)
+            k_pe = k_pe.reshape(seq_len, -1)
+
         q_pe, k_pe = self.rotary_emb(positions, q_pe, k_pe)
+
+        if self.use_normal_rope:
+            q_pe, k_pe = q_pe.view(ori_q_pe_shape), k_pe.view(ori_k_pe_shape)
+
         q[..., self.qk_nope_head_dim:] = q_pe
         k = torch.empty_like(q)
         k[..., :self.qk_nope_head_dim] = k_nope
         k[..., self.qk_nope_head_dim:] = k_pe
-        q = torch.nn.functional.pad(q, [0, 256 - self.qk_head_dim],
-                                    value=0).view(-1,
-                                                  self.num_local_heads * 256)
-        k = torch.nn.functional.pad(k, [0, 256 - self.qk_head_dim],
-                                    value=0).view(-1,
-                                                  self.num_local_heads * 256)
-        v = torch.nn.functional.pad(v, [0, 256 - self.v_head_dim],
-                                    value=0).view(-1,
-                                                  self.num_local_heads * 256)
+        # padding value to qk_head_dim for alignment
+        v = torch.nn.functional.pad(
+            v, [0, self.qk_head_dim - self.v_head_dim],
+            value=0).view(-1, self.num_local_heads * self.qk_head_dim)
+        if is_hpu:
+            # need restore from tensor(x0, y0) to tensor(x1, y1, z1) for hpu
+            q = q.reshape(_batch_size, q.shape[0] // _batch_size, q.shape[1])
+            k = k.reshape(_batch_size, k.shape[0] // _batch_size, k.shape[1])
+            v = v.reshape(_batch_size, v.shape[0] // _batch_size, v.shape[1])
         attn_output = self.attn(q, k, v, kv_cache, attn_metadata)
+        if is_hpu:
+            # need restore from tensor(x0, y0, z0) to tensor(x1, y1) for hpu
+            attn_output = attn_output.reshape(
+                attn_output.shape[0] * attn_output.shape[1],
+                attn_output.shape[2])
         attn_output = attn_output.view(
-            -1, self.num_local_heads, 256)[..., :self.v_head_dim].reshape(
+            -1, self.num_local_heads,
+            self.qk_head_dim)[..., :self.v_head_dim].reshape(
                 -1, self.num_local_heads * self.v_head_dim)
         output, _ = self.o_proj(attn_output)
+        if is_hpu:
+            output = output.reshape(_batch_size,
+                                    output.shape[0] // _batch_size,
+                                    output.shape[1])
         return output
 
 
@@ -354,6 +407,7 @@ class DeepseekV2DecoderLayer(nn.Module):
             quant_config=quant_config,
             prefix=f"{prefix}.self_attn",
         )
+
         if (config.n_routed_experts is not None
                 and layer_idx >= config.first_k_dense_replace
                 and layer_idx % config.moe_layer_freq == 0):
@@ -383,6 +437,8 @@ class DeepseekV2DecoderLayer(nn.Module):
         attn_metadata: AttentionMetadata,
         residual: Optional[torch.Tensor],
     ) -> torch.Tensor:
+        if is_hpu:
+            _batch_size = positions.shape[0]
         # Self Attention
         if residual is None:
             residual = hidden_states
@@ -400,7 +456,16 @@ class DeepseekV2DecoderLayer(nn.Module):
         # Fully Connected
         hidden_states, residual = self.post_attention_layernorm(
             hidden_states, residual)
+        if is_hpu:
+            # need reshape from tensor(x0, y0) to tensor(x1) for hpu
+            hidden_states = hidden_states.reshape(
+                hidden_states.shape[0] * hidden_states.shape[1],
+                hidden_states.shape[2])
         hidden_states = self.mlp(hidden_states)
+        if is_hpu:
+            hidden_states = hidden_states.reshape(
+                _batch_size, hidden_states.shape[0] // _batch_size,
+                hidden_states.shape[1])
         return hidden_states, residual
 
 
@@ -616,6 +681,11 @@ class DeepseekV2ForCausalLM(nn.Module, SupportsPP):
                 else:
                     # Skip loading extra bias for GPTQ models.
                     if name.endswith(".bias") and name not in params_dict:
+                        continue
+
+                    # Remapping the name of FP8 kv-scale.
+                    name = maybe_remap_kv_scale_name(name, params_dict)
+                    if name is None:
                         continue
 
                     if is_pp_missing_parameter(name, self):

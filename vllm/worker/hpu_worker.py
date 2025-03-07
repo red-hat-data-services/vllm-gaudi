@@ -2,8 +2,13 @@
 # Copyright (C) 2024 Habana Labs, Ltd. an Intel Company
 ###############################################################################
 
+import contextlib
 import gc
+import gzip
+import json
 import os
+import queue
+import time
 from typing import List, Optional, Set, Tuple, Type
 
 import habana_frameworks.torch as htorch  # noqa:F401
@@ -18,11 +23,14 @@ from vllm.distributed import (ensure_model_parallel_initialized,
 from vllm.logger import init_logger
 from vllm.lora.request import LoRARequest
 from vllm.model_executor import set_random_seed
+from vllm.model_executor.layers.sampler import SamplerOutput
 from vllm.prompt_adapter.request import PromptAdapterRequest
 from vllm.sequence import ExecuteModelRequest
-from vllm.utils import hpu_backend_string, hpu_device_string, is_fake_hpu
+from vllm.utils import (bind_kv_cache, hpu_backend_string, hpu_device_string,
+                        is_fake_hpu)
 from vllm.worker.cache_engine import CacheEngine
-from vllm.worker.hpu_model_runner import HPUModelRunner
+from vllm.worker.hpu_enc_dec_model_runner import HPUEncoderDecoderModelRunner
+from vllm.worker.hpu_model_runner import HPUModelRunner, HPUModelRunnerBase
 from vllm.worker.worker_base import (LocalOrDistributedWorkerBase, WorkerBase,
                                      WorkerInput)
 
@@ -71,43 +79,108 @@ class HPUWorker(LocalOrDistributedWorkerBase):
                 not in ["medusa", "mlp_speculator", "eagle"]) \
                     else {"return_hidden_states": True}
 
-        ModelRunnerClass: Type[HPUModelRunner] = HPUModelRunner
-        if model_runner_cls is not None:
-            ModelRunnerClass = model_runner_cls
-        else:
-            ModelRunnerClass = HPUModelRunner
-        self.model_runner: HPUModelRunner = ModelRunnerClass(
+        is_encoder_decoder_model = self._is_encoder_decoder_model()
+        ModelRunnerClass: Type[HPUModelRunnerBase] = HPUModelRunner
+        if is_encoder_decoder_model:
+            ModelRunnerClass = HPUEncoderDecoderModelRunner
+        self.model_runner: HPUModelRunnerBase = ModelRunnerClass(
             vllm_config=vllm_config,
             kv_cache_dtype=self.cache_config.cache_dtype,
             is_driver_worker=is_driver_worker,
             **speculative_args,
         )
+        if model_runner_cls is not None:
+            self.model_runner = model_runner_cls(self.model_runner)
         # Uninitialized cache engine. Will be initialized by
         # initialize_cache.
         self.cache_engine: List[HPUCacheEngine]
-        # Initialize gpu_cache as embedding models don't initialize kv_caches
-        self.hpu_cache: Optional[List[List[torch.tensor]]] = None
+        # Initialize gpu_cache as pooling models don't initialize kv_caches
+        self.hpu_cache: Optional[List[List[torch.Tensor]]] = None
         # Torch profiler. Enabled and configured through env vars:
         # VLLM_TORCH_PROFILER_DIR=/path/to/save/trace
         if envs.VLLM_TORCH_PROFILER_DIR:
             torch_profiler_trace_dir = envs.VLLM_TORCH_PROFILER_DIR
             logger.info("Profiling enabled. Traces will be saved to: %s",
                         torch_profiler_trace_dir)
+
+            if os.getenv('VLLM_PROFILER_ENABLED') == 'full':
+                fn = self.full_trace_handler
+                with_stack = False
+            else:
+                fn = torch.profiler.tensorboard_trace_handler
+                with_stack = True
             self.profiler = torch.profiler.profile(
                 activities=[
                     torch.profiler.ProfilerActivity.CPU,
                     torch.profiler.ProfilerActivity.HPU,
                 ],
-                with_stack=True,
-                on_trace_ready=torch.profiler.tensorboard_trace_handler(
-                    torch_profiler_trace_dir, use_gzip=True))
+                with_stack=with_stack,
+                on_trace_ready=fn(torch_profiler_trace_dir, use_gzip=True))
         else:
             self.profiler = None
+
+    def full_trace_handler(self, dir_name, use_gzip=False):
+
+        def handler_fn(prof) -> None:
+            if not os.path.isdir(dir_name):
+                try:
+                    os.makedirs(dir_name, exist_ok=True)
+                except Exception as e:
+                    raise RuntimeError("Can't create directory: " +
+                                       dir_name) from e
+            file_name = f"vllm.{time.time_ns()}.pt.trace.json"
+            file_path = os.path.join(dir_name, file_name)
+            prof.export_chrome_trace(file_path)
+            with open(file_path) as f:
+                pytorch_trace = json.load(f)
+            os.remove(file_path)
+            base = pytorch_trace['baseTimeNanoseconds'] / 1000
+            events = self.model_runner.profiler.profiling_trace_events
+            while True:
+                try:
+                    event_str = events.get_nowait()
+                    event = json.loads(event_str[:-1])
+                    event['ts'] = event['ts'] - base
+                    pytorch_trace['traceEvents'].append(event)
+                except queue.Empty:
+                    break
+
+            pytorch_trace['traceEvents'].append({
+                "args": {
+                    "name": "vLLM"
+                },
+                "name": "process_name",
+                "ph": "M",
+                "pid": 1,
+                "tid": 0,
+                "ts": 0.0
+            })
+            if use_gzip:
+                file_path = file_path + ".gz"
+                with gzip.open(file_path, 'wt', encoding="ascii") as zipfile:
+                    json.dump(pytorch_trace, zipfile)
+            else:
+                with open(file_path, "w") as outfile:
+                    outfile.write(json.dumps(pytorch_trace))
+            logger.info("Saved full profiling to %s", file_path)
+
+        return handler_fn
+
+    def _is_encoder_decoder_model(self):
+        return self.model_config.is_encoder_decoder
 
     def start_profile(self):
         if self.profiler is None:
             raise RuntimeError("Profiler is not enabled.")
-        self.profiler.start()
+        high_level_profiler = self.model_runner.profiler
+        with high_level_profiler.record_event('internal', 'start_profiler'):
+            # Clean up the queue
+            while True:
+                try:
+                    high_level_profiler.profiling_trace_events.get_nowait()
+                except queue.Empty:
+                    break
+            self.profiler.start()
 
     def stop_profile(self):
         if self.profiler is None:
@@ -144,6 +217,70 @@ class HPUWorker(LocalOrDistributedWorkerBase):
 
     def load_model(self):
         self.model_runner.load_model()
+
+    def execute_model(
+        self,
+        execute_model_req: Optional[ExecuteModelRequest] = None,
+    ) -> Optional[List[SamplerOutput]]:
+        # VLLM_HPU_LOG_STEP_GRAPH_COMPILATION     - will log graph compilations per engine step, only when there was any - highly recommended to use alongside PT_HPU_METRICS_GC_DETAILS! # noqa:E501
+        # VLLM_HPU_LOG_STEP_GRAPH_COMPILATION_ALL - will log graph compilations per engine step, always, even if there were none # noqa:E501
+        # VLLM_HPU_LOG_STEP_CPU_FALLBACKS         - will log cpu fallbacks per engine step, only when there was any # noqa:E501
+        # VLLM_HPU_LOG_STEP_CPU_FALLBACKS_ALL     - will log cpu fallbacks per engine step, always, even if there were none # noqa:E501
+        log_graph_compilation_all = os.environ.get(
+            'VLLM_HPU_LOG_STEP_GRAPH_COMPILATION_ALL', '0') != '0'
+        log_graph_compilation = os.environ.get(
+            'VLLM_HPU_LOG_STEP_GRAPH_COMPILATION',
+            '0') != '0' or log_graph_compilation_all
+        log_cpu_fallbacks_all = os.environ.get(
+            'VLLM_HPU_LOG_STEP_CPU_FALLBACKS_ALL', '0') != '0'
+        log_cpu_fallbacks = os.environ.get('VLLM_HPU_LOG_STEP_CPU_FALLBACKS',
+                                           '0') != '0' or log_cpu_fallbacks_all
+        if (log_graph_compilation or log_cpu_fallbacks) \
+            and execute_model_req is not None:
+            from habana_frameworks.torch.hpu.metrics import metric_localcontext
+            seq_group_metadata_list = execute_model_req.seq_group_metadata_list
+            is_prompt = any([
+                seq_group_metadata.is_prompt
+                for seq_group_metadata in seq_group_metadata_list
+            ])
+            max_context_len = max([
+                max([
+                    len(v.prompt_token_ids) + len(v.output_token_ids)
+                    for v in seq_group_metadata.seq_data.values()
+                ]) for seq_group_metadata in seq_group_metadata_list
+            ])  # whoa, that's some spicy stuff right here
+            max_num_blocks = (
+                (max_context_len - 1) // self.cache_config.block_size) + 1
+            input_stats = (f'is_prompt: {is_prompt}, '
+                           f'num_seqs: {len(seq_group_metadata_list)}, '
+                           f'max_context_len: {max_context_len}, '
+                           f'max_num_blocks {max_num_blocks}')
+            gc_ctx = metric_localcontext(
+                "graph_compilation"
+            ) if log_graph_compilation else contextlib.nullcontext()
+            cpu_fallback_ctx = metric_localcontext(
+                "cpu_fallback"
+            ) if log_cpu_fallbacks else contextlib.nullcontext()
+            with gc_ctx as gc_local_metric, \
+                cpu_fallback_ctx as cpu_fallback_local_metric:
+                output = LocalOrDistributedWorkerBase.execute_model(
+                    self, execute_model_req)
+            if (log_graph_compilation and gc_local_metric.stats()[0][1] > 0
+                ) or log_graph_compilation_all:
+                msg = ("VLLM_HPU_STEP_GRAPH_COMPILATION: "
+                       f"{gc_local_metric.stats()}, {input_stats}")
+                logger.warning(msg)
+            if (log_cpu_fallbacks and cpu_fallback_local_metric.stats()[0][1] >
+                    0) or log_cpu_fallbacks_all:
+                msg = ("VLLM_HPU_STEP_CPU_FALLBACK: "
+                       f"{cpu_fallback_local_metric.stats()}, {input_stats}")
+                logger.warning(msg)
+
+            return output
+
+        output = LocalOrDistributedWorkerBase.execute_model(
+            self, execute_model_req)
+        return output
 
     @torch.inference_mode()
     def determine_num_available_blocks(self) -> Tuple[int, int]:
@@ -245,6 +382,8 @@ class HPUWorker(LocalOrDistributedWorkerBase):
             self.cache_engine[ve].gpu_cache
             for ve in range(self.parallel_config.pipeline_parallel_size)
         ]
+        bind_kv_cache(self.compilation_config.static_forward_context,
+                      self.hpu_cache)
 
     def _warm_up_model(self) -> None:
         # NOTE(kzawora): We should use virtual engine index here
@@ -336,7 +475,7 @@ class HPUWorker(LocalOrDistributedWorkerBase):
         raise NotImplementedError(
             "Prompt Adapter is not implemented for HPU backend.")
 
-    def shutdown_inc(self):
+    def shutdown(self):
         self.model_runner.shutdown_inc()
 
     @property
