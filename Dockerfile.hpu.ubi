@@ -1,10 +1,10 @@
-ARG BASE_IMAGE=vault.habana.ai/gaudi-docker/1.19.1/rhel9.4/habanalabs/pytorch-installer-2.5.1:1.19.1-26
+ARG BASE_IMAGE=vault.habana.ai/gaudi-docker/1.20.0/rhel9.4/habanalabs/pytorch-installer-2.6.0:1.20.0-543
 FROM ${BASE_IMAGE} as habana-base
 
 USER root
 
 ENV VLLM_TARGET_DEVICE="hpu"
-ENV HABANA_SOFTWARE_VERSION="1.19.1-26"
+ENV HABANA_SOFTWARE_VERSION="1.20.0-543"
 
 RUN dnf -y update --best --allowerasing --skip-broken && dnf clean all
 
@@ -67,6 +67,23 @@ RUN --mount=type=cache,target=/root/.cache/ccache \
     CMAKE_BUILD_TYPE=Release \
     python3 setup.py bdist_wheel --dist-dir=dist
 
+#################### libsodium Build IMAGE ####################
+FROM habana-base as libsodium-builder
+
+RUN dnf install -y gcc gzip \
+    && dnf clean all
+
+WORKDIR /usr/src/libsodium
+
+ARG LIBSODIUM_VERSION=1.0.20
+RUN curl -LO https://github.com/jedisct1/libsodium/releases/download/${LIBSODIUM_VERSION}-RELEASE/libsodium-${LIBSODIUM_VERSION}.tar.gz \
+    && tar -xzvf libsodium*.tar.gz \
+    && rm -f libsodium*.tar.gz \
+    && mv libsodium*/* ./
+
+RUN CFLAGS="-O3 -Wall -Werror=format-security -Wno-unused-function -Wp,-D_GLIBCXX_ASSERTIONS -fstack-protector-strong -fstack-clash-protection -fcf-protection"\
+    ./configure --prefix="/usr/" && make -j $MAX_JOBS && make check
+
 ## Release #####################################################################
 FROM python-install AS vllm-openai
 
@@ -83,6 +100,11 @@ RUN dnf install -y --setopt=install_weak_deps=0 --nodocs gcc \
 RUN --mount=type=bind,from=build,src=/workspace/dist,target=/workspace/dist \
     --mount=type=cache,target=/root/.cache/pip \
     pip install $(echo dist/*.whl)'[tensorizer]' "jinja2>=3.1.5" --verbose
+
+# Install libsodium for Tensorizer encryption
+RUN --mount=type=bind,from=libsodium-builder,src=/usr/src/libsodium,target=/usr/src/libsodium \
+    cd /usr/src/libsodium \
+    && make install
 
 ENV HF_HUB_OFFLINE=1 \
     PORT=8000 \
@@ -110,7 +132,7 @@ USER root
 
 RUN --mount=type=cache,target=/root/.cache/pip \
     --mount=type=bind,from=build,src=/workspace/dist,target=/workspace/dist \
-    pip install $(echo dist/*.whl)'[tensorizer]' vllm-tgis-adapter==0.6.1
+    pip install $(echo dist/*.whl)'[tensorizer]' vllm-tgis-adapter==0.6.2
 
 ENV GRPC_PORT=8033 \
     PORT=8000 \

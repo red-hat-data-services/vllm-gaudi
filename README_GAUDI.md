@@ -12,8 +12,8 @@ To achieve the best performance, please follow the methods outlined in the
 
 - Ubuntu 22.04 LTS OS
 - Python 3.10
-- Intel Gaudi accelerator
-- Intel Gaudi software version 1.19.0 and above
+- Intel Gaudi 2 and 3 AI accelerators
+- Intel Gaudi software version 1.20.0 and above
 
 ## Quick Start Using Dockerfile
 Set up the container with latest release of Gaudi Software Suite using the Dockerfile:
@@ -52,8 +52,8 @@ Refer to the [Intel Gaudi documentation](https://docs.habana.ai/en/latest/Instal
 Use the following commands to run a Docker image. Make sure to update the versions below as listed in the [Support Matrix](https://docs.habana.ai/en/latest/Support_Matrix/Support_Matrix.html):
 
 ```{.console}
-$ docker pull vault.habana.ai/gaudi-docker/1.19.0/ubuntu22.04/habanalabs/pytorch-installer-2.5.1:latest
-$ docker run -it --runtime=habana -e HABANA_VISIBLE_DEVICES=all -e OMPI_MCA_btl_vader_single_copy_mechanism=none --cap-add=sys_nice --net=host --ipc=host vault.habana.ai/gaudi-docker/1.19.0/ubuntu22.04/habanalabs/pytorch-installer-2.5.1:latest
+$ docker pull vault.habana.ai/gaudi-docker/1.20.0/ubuntu22.04/habanalabs/pytorch-installer-2.6.0:latest
+$ docker run -it --runtime=habana -e HABANA_VISIBLE_DEVICES=all -e OMPI_MCA_btl_vader_single_copy_mechanism=none --cap-add=sys_nice --net=host --ipc=host vault.habana.ai/gaudi-docker/1.20.0/ubuntu22.04/habanalabs/pytorch-installer-2.6.0:latest
 ```
 
 ### Build and Install vLLM
@@ -67,7 +67,7 @@ vLLM releases are being performed periodically to align with Intel® Gaudi® sof
 ```{.console}
 $ git clone https://github.com/HabanaAI/vllm-fork.git
 $ cd vllm-fork
-$ git checkout v0.6.4.post2+Gaudi-1.19.0
+$ git checkout v0.6.6.post1+Gaudi-1.20.0
 $ pip install -r requirements-hpu.txt
 $ python setup.py develop
 ```
@@ -104,40 +104,48 @@ $ python setup.py develop
 | HPU autodetection 	| HPU users do not need to specify the target platform, it will be detected automatically upon vLLM startup 	| N/A 	|
 | Paged KV cache with algorithms enabled for Intel Gaudi accelerators 	| vLLM HPU backend contains a custom Paged Attention and cache operators implementations optimized for Gaudi devices. 	| N/A 	|
 | Custom Intel Gaudi operator implementations 	| vLLM HPU backend provides optimized implementations of operators such as prefill attention, Root Mean Square Layer Normalization, Rotary Positional Encoding. 	| N/A 	|
-| Tensor parallel inference (single-node multi-HPU) 	| vLLM HPU backend support multi-HPU inference across a single node with tensor parallelism with Ray and HCCL. 	| [Documentation](https://docs.vllm.ai/en/latest/serving/distributed_serving.html)<br>[Example](https://docs.ray.io/en/latest/serve/tutorials/vllm-example.html)<br>[HCCL reference](https://docs.habana.ai/en/latest/API_Reference_Guides/HCCL_APIs/index.html) 	|
+| Tensor parallel inference (single-node multi-HPU) 	| vLLM HPU backend support multi-HPU inference across a single node with tensor parallelism with Ray and HCCL. 	| [Documentation](https://docs.vllm.ai/en/stable/serving/distributed_serving.html)<br>[Example](https://docs.ray.io/en/latest/serve/tutorials/vllm-example.html)<br>[HCCL reference](https://docs.habana.ai/en/latest/API_Reference_Guides/HCCL_APIs/index.html) 	|
 | Inference with HPU Graphs 	| vLLM HPU backend uses HPU Graphs by default for optimal performance. When HPU Graphs are enabled, execution graphs will be recorded ahead of time, to be later replayed during inference, significantly reducing host overheads. 	| [Documentation](https://docs.habana.ai/en/latest/PyTorch/Inference_on_PyTorch/Inference_Using_HPU_Graphs.html)<br>[vLLM HPU backend execution modes](https://docs.vllm.ai/en/stable/getting_started/gaudi-installation.html#execution-modes)<br>[Optimization guide](https://docs.vllm.ai/en/latest/getting_started/gaudi-installation.html#hpu-graph-capture) 	|
 | Inference with torch.compile (experimental) 	| vLLM HPU backend experimentally supports inference with torch.compile. 	| [vLLM HPU backend execution modes](https://docs.vllm.ai/en/stable/getting_started/gaudi-installation.html#execution-modes) 	|
 | Attention with Linear Biases (ALiBi) 	| vLLM HPU backend supports models utilizing Attention with Linear Biases (ALiBi) such as mpt-7b. 	| [vLLM supported models](https://docs.vllm.ai/en/latest/models/supported_models.html) 	|
 | INC quantization 	| vLLM HPU backend supports FP8 model and KV cache quantization and calibration with Intel Neural Compressor (INC). 	| [Documentation](https://docs.habana.ai/en/latest/PyTorch/Inference_on_PyTorch/Inference_Using_FP8.html) 	|
+| AutoAWQ quantization | vLLM HPU backend supports the inference with models quantized using AutoAWQ library. | [Library](https://github.com/casper-hansen/AutoAWQ) |
+| AutoGPTQ quantization | vLLM HPU backend supports the inference with models quantized using AutoGPTQ library. | [Library](https://github.com/AutoGPTQ/AutoGPTQ) |
 | LoRA/MultiLoRA support 	| vLLM HPU backend includes support for LoRA and MultiLoRA on supported models. 	| [Documentation](https://docs.vllm.ai/en/stable/models/lora.html)<br>[Example](https://docs.vllm.ai/en/stable/getting_started/examples/multilora_inference.html)<br>[vLLM supported models](https://docs.vllm.ai/en/latest/models/supported_models.html) 	|
 | Multi-step scheduling support 	| vLLM HPU backend includes multi-step scheduling support for host overhead reduction, configurable by standard `--num-scheduler-seqs` parameter.  	| [Feature RFC](https://github.com/vllm-project/vllm/issues/6854) 	|
 | Automatic prefix caching (experimental) 	| vLLM HPU backend includes automatic prefix caching (APC) support for more efficient prefills, configurable by standard `--enable-prefix-caching` parameter. 	| [Documentation](https://docs.vllm.ai/en/stable/automatic_prefix_caching/apc.html)<br>[Details](https://docs.vllm.ai/en/stable/automatic_prefix_caching/details.html) 	|
-| Speculative decoding (experimental) 	| vLLM HPU backend includes experimental speculative decoding support for improving inter-token latency in some scenarios, configurabie via standard `--speculative_model` and `--num_speculative_tokens` parameters. 	| [Documentation](https://docs.vllm.ai/en/latest/models/spec_decode.html)<br>[Example](https://docs.vllm.ai/en/latest/getting_started/examples/offline_inference_mlpspeculator.html) 	|
+| Speculative decoding (functional release) 	| vLLM HPU backend includes experimental speculative decoding support for improving inter-token latency in some scenarios, configurabie via standard `--speculative_model` and `--num_speculative_tokens` parameters. 	| [Documentation](https://docs.vllm.ai/en/stable/models/spec_decode.html)<br>[Example](https://docs.vllm.ai/en/stable/getting_started/examples/mlpspeculator.html) 	|
+| Multiprocessing backend 	| Multiprocessing is the default distributed runtime in vLLM. The vLLM HPU backend supports it alongside Ray.	| [Documentation](https://docs.vllm.ai/en/latest/serving/distributed_serving.html)	| 
 
 # Unsupported Features
 
 - Beam search
-- AWQ quantization
 - Prefill chunking (mixed-batch inferencing)
 
 # Supported Configurations
 
-The following configurations have been validated to be function with Gaudi2 devices. Configurations that are not listed may or may not work.
+The following configurations have been validated to be function with Gaudi2 devices with random or greedy sampling. Configurations that are not listed may or may not work.
 
-- [meta-llama/Llama-2-7b](https://huggingface.co/meta-llama/Llama-2-7b) on single HPU, or with tensor parallelism on 2x and 8x HPU, BF16 datatype with random or greedy sampling
-- [meta-llama/Llama-2-7b-chat-hf](https://huggingface.co/meta-llama/Llama-2-7b-chat-hf) on single HPU, or with tensor parallelism on 2x and 8x HPU, BF16 datatype with random or greedy sampling
-- [meta-llama/Meta-Llama-3-8B](https://huggingface.co/meta-llama/Meta-Llama-3-8B) on single HPU, or with tensor parallelism on 2x and 8x HPU, BF16 datatype with random or greedy sampling
-- [meta-llama/Meta-Llama-3-8B-Instruct](https://huggingface.co/meta-llama/Meta-Llama-3-8B-Instruct) on single HPU, or with tensor parallelism on 2x and 8x HPU, BF16 datatype with random or greedy sampling
-- [meta-llama/Meta-Llama-3.1-8B](https://huggingface.co/meta-llama/Meta-Llama-3.1-8B) on single HPU, or with tensor parallelism on 2x and 8x HPU, BF16 datatype with random or greedy sampling
-- [meta-llama/Meta-Llama-3.1-8B-Instruct](https://huggingface.co/meta-llama/Meta-Llama-3.1-8B-Instruct) on single HPU, or with tensor parallelism on 2x and 8x HPU, BF16 datatype with random or greedy sampling
-- [meta-llama/Llama-2-70b](https://huggingface.co/meta-llama/Llama-2-70b) with tensor parallelism on 8x HPU, BF16 datatype with random or greedy sampling
-- [meta-llama/Llama-2-70b-chat-hf](https://huggingface.co/meta-llama/Llama-2-70b-chat-hf) with tensor parallelism on 8x HPU, BF16 datatype with random or greedy sampling
-- [meta-llama/Meta-Llama-3-70B](https://huggingface.co/meta-llama/Meta-Llama-3-70B) with tensor parallelism on 8x HPU, BF16 datatype with random or greedy sampling
-- [meta-llama/Meta-Llama-3-70B-Instruct](https://huggingface.co/meta-llama/Meta-Llama-3-70B-Instruct) with tensor parallelism on 8x HPU, BF16 datatype with random or greedy sampling
-- [meta-llama/Meta-Llama-3.1-70B](https://huggingface.co/meta-llama/Meta-Llama-3.1-70B) with tensor parallelism on 8x HPU, BF16 datatype with random or greedy sampling
-- [meta-llama/Meta-Llama-3.1-70B-Instruct](https://huggingface.co/meta-llama/Meta-Llama-3.1-70B-Instruct) with tensor parallelism on 8x HPU, BF16 datatype with random or greedy sampling
-- [mistralai/Mistral-7B-Instruct-v0.3](https://huggingface.co/mistralai/Mistral-7B-Instruct-v0.3) on single HPU or with tensor parallelism on 2x HPU, BF16 datatype with random or greedy sampling
-- [mistralai/Mixtral-8x7B-Instruct-v0.1](https://huggingface.co/mistralai/Mixtral-8x7B-Instruct-v0.1) with tensor parallelism on 2x HPU, BF16 datatype with random or greedy sampling
+- [meta-llama/Llama-2-7b](https://huggingface.co/meta-llama/Llama-2-7b) on single HPU, or with tensor parallelism on 2x and 8x HPU, BF16 datatype
+- [meta-llama/Llama-2-7b-chat-hf](https://huggingface.co/meta-llama/Llama-2-7b-chat-hf) on single HPU, or with tensor parallelism on 2x and 8x HPU, BF16 datatype
+- [meta-llama/Meta-Llama-3-8B](https://huggingface.co/meta-llama/Meta-Llama-3-8B) on single HPU, or with tensor parallelism on 2x and 8x HPU, BF16 datatype
+- [meta-llama/Meta-Llama-3-8B-Instruct](https://huggingface.co/meta-llama/Meta-Llama-3-8B-Instruct) on single HPU, or with tensor parallelism on 2x and 8x HPU, BF16 datatype
+- [meta-llama/Meta-Llama-3.1-8B](https://huggingface.co/meta-llama/Meta-Llama-3.1-8B) on single HPU, or with tensor parallelism on 2x and 8x HPU, BF16 datatype
+- [meta-llama/Meta-Llama-3.1-8B-Instruct](https://huggingface.co/meta-llama/Meta-Llama-3.1-8B-Instruct) on single HPU, or with tensor parallelism on 2x and 8x HPU, BF16 datatype
+- [meta-llama/Llama-2-70b](https://huggingface.co/meta-llama/Llama-2-70b) with tensor parallelism on 8x HPU, BF16 datatype
+- [meta-llama/Llama-2-70b-chat-hf](https://huggingface.co/meta-llama/Llama-2-70b-chat-hf) with tensor parallelism on 8x HPU, BF16 datatype
+- [meta-llama/Meta-Llama-3-70B](https://huggingface.co/meta-llama/Meta-Llama-3-70B) with tensor parallelism on 8x HPU, BF16 datatype
+- [meta-llama/Meta-Llama-3-70B-Instruct](https://huggingface.co/meta-llama/Meta-Llama-3-70B-Instruct) with tensor parallelism on 8x HPU, BF16 datatype
+- [meta-llama/Meta-Llama-3.1-70B](https://huggingface.co/meta-llama/Meta-Llama-3.1-70B) with tensor parallelism on 8x HPU, BF16 datatype
+- [meta-llama/Meta-Llama-3.1-70B-Instruct](https://huggingface.co/meta-llama/Meta-Llama-3.1-70B-Instruct) with tensor parallelism on 8x HPU, BF16 datatype
+- [mistralai/Mistral-7B-Instruct-v0.3](https://huggingface.co/mistralai/Mistral-7B-Instruct-v0.3) on single HPU or with tensor parallelism on 2x HPU, BF16 datatype
+- [mistralai/Mixtral-8x7B-Instruct-v0.1](https://huggingface.co/mistralai/Mixtral-8x7B-Instruct-v0.1) with tensor parallelism on 2x HPU, BF16 datatype
+- [llava-hf/llava-1.5-7b-hf](https://huggingface.co/llava-hf/llava-1.5-7b-hf) on single HPU or with tensor parallelism on 8x HPU, BF16 datatype
+- [Qwen/Qwen2-72B-Instruct](https://huggingface.co/Qwen/Qwen2-72B-Instruct) with tensor parallelism on 8x HPU, BF16 datatype
+- [Qwen/Qwen2.5-72B-Instruct](https://huggingface.co/Qwen/Qwen2.5-72B-Instruct) with tensor parallelism on 8x HPU, BF16 datatype
+- [mistralai/Mistral-Large-Instruct-2407](https://huggingface.co/mistralai/Mistral-Large-Instruct-2407) with tensor parallelism on 8x HPU, BF16 datatype
+- [princeton-nlp/gemma-2-9b-it-SimPO](https://huggingface.co/princeton-nlp/gemma-2-9b-it-SimPO) on single HPU, BF16 datatype
+- [meta-llama/Llama-3.2-90B-Vision-Instruct](https://huggingface.co/meta-llama/Llama-3.2-90B-Vision-Instruct) with tensor parallelism on 4x and 8x HPU, BF16 datatype
 
 # Performance Tuning
 
@@ -365,6 +373,7 @@ Additionally, there are HPU PyTorch Bridge environment variables impacting vLLM 
 
 - `PT_HPU_LAZY_MODE`: if `0`, PyTorch Eager backend for Gaudi will be used, if `1` PyTorch Lazy backend for Gaudi will be used. `1` is the default.
 - `PT_HPU_ENABLE_LAZY_COLLECTIVES` must be set to `true` for tensor parallel inference with HPU Graphs.
+- `PT_HPUGRAPH_DISABLE_TENSOR_CACHE` must be set to `false` for llava model.
 
 # Quantization, FP8 Inference and Model Calibration Process
 
@@ -374,7 +383,7 @@ Additionally, there are HPU PyTorch Bridge environment variables impacting vLLM 
 
 Once you have completed the model calibration process and collected the measurements, you can run FP8 inference with vLLM using the following command:
 ```bash
-export QUANT_CONFIG=/path/to/quant/config/inc/meta-llama-3.1-405b-instruct/maxabs_measure_g3.json
+export QUANT_CONFIG=/path/to/quant/config/inc/meta-llama-3.1-405b-instruct/maxabs_quant_g3.json
 vllm serve meta-llama/Llama-3.1-405B-Instruct --quantization inc --kv-cache-dtype fp8_inc --weights-load-device cpu --tensor_paralel_size 8
 ```
 
@@ -394,110 +403,8 @@ measurements for a given model. The quantization configuration is used during in
 
 If you encounter device out-of-memory issues or want to attempt inference with higher batch sizes, try tweaking HPU Graphs as follows:
 
-- Tweak `gpu_memory_utilization` knob. This will decrease the allocation of KV cache, leaving some headroom for capturing graphs with larger batch size. By default, `gpu_memory_utilization` is set to 0.9.
-  It attempts to allocate ~90% of HBM left for KV cache after short profiling run. Note that this reduces the number of KV cache blocks you have available, and therefore reduces the effective maximum
-  number of tokens handled at a given time.
-- If this method is not efficient, you can disable `HPUGraph` completely. With HPU Graphs disabled, you are trading latency and throughput at lower batches for potentially higher throughput on higher batches.
-  You can do that by adding `--enforce-eager` flag to the server (for online inference), or by passing `enforce_eager=True` argument to LLM constructor (for offline inference).
-
-
-# Changelog
-## 1.19.0
-### New features
- - Added fake HPU mode to Habana components with dummy habana_frameworks module. ([#250](https://github.com/HabanaAI/vllm-fork/pull/250))
- - Enabled HPU Graph capture even when warmup is skipped ([#320](https://github.com/HabanaAI/vllm-fork/pull/320))
- - Introduced vllm-hpu-extension, removed vllm.hpu directory and changed relevant imports ([#291](https://github.com/HabanaAI/vllm-fork/pull/291), [#323](https://github.com/HabanaAI/vllm-fork/pull/323))
- - Enabled async output processing for HPU ([#342](https://github.com/HabanaAI/vllm-fork/pull/342))
- - Enabled automatic BF16 usage on HPU instead of FP16 ([#361](https://github.com/HabanaAI/vllm-fork/pull/361))
- - Added padding-aware scheduling and option to limit prefill batch size ([#394](https://github.com/HabanaAI/vllm-fork/pull/394))
- - Overhauled HPU support of RotaryEmbedding ([#404](https://github.com/HabanaAI/vllm-fork/pull/404))
- - Added HPU specific arguments to benchmark_throughput ([#406](https://github.com/HabanaAI/vllm-fork/pull/406))
- - Added support for long context lengths with LoRA ([#418](https://github.com/HabanaAI/vllm-fork/pull/418))
- - Added support for various softmax normalization options ([#378](https://github.com/HabanaAI/vllm-fork/pull/378), [#420](https://github.com/HabanaAI/vllm-fork/pull/420))
- - Added initial support for automatic prefix caching ([#162](https://github.com/HabanaAI/vllm-fork/pull/162))
- - Added multi step scheduling HPU support with tensor parallelism support ([#441](https://github.com/HabanaAI/vllm-fork/pull/441), [#457](https://github.com/HabanaAI/vllm-fork/pull/457))
- - Added HPU support for speculative_decoding ([#375](https://github.com/HabanaAI/vllm-fork/pull/375), [#461](https://github.com/HabanaAI/vllm-fork/pull/461))
- - Enabled asynchronous input preparation in HPU model runner ([#497](https://github.com/HabanaAI/vllm-fork/pull/497))
- - Aligned HPU fork with upstream code up to 01aae1c (v0.6.4.post2) ([#259](https://github.com/HabanaAI/vllm-fork/pull/259), [#311](https://github.com/HabanaAI/vllm-fork/pull/311), [#340](https://github.com/HabanaAI/vllm-fork/pull/340), [#353](https://github.com/HabanaAI/vllm-fork/pull/353), [#465](https://github.com/HabanaAI/vllm-fork/pull/465), [#468](https://github.com/HabanaAI/vllm-fork/pull/468), [#485](https://github.com/HabanaAI/vllm-fork/pull/485))
- 
-### Performance optimizations
- - Reduced default value of VLLM_GRAPH_RESERVED_MEM to 0.1 ([#292](https://github.com/HabanaAI/vllm-fork/pull/292))
- - Added attention performance optimizations: prefill cache write chunking, div_i32 removal from insert_or_update_cache ([#289](https://github.com/HabanaAI/vllm-fork/pull/289))
- - Optimized Qwen2 model on Gaudi ([#233](https://github.com/HabanaAI/vllm-fork/pull/233))
- - Optimized performance of top_p and top_k calculations ([#449](https://github.com/HabanaAI/vllm-fork/pull/449))
- - Removed CPU sync before sampler ([#414](https://github.com/HabanaAI/vllm-fork/pull/414))
- - Enabled Contiguous Paged Attention optimization ([#424](https://github.com/HabanaAI/vllm-fork/pull/424), [#433](https://github.com/HabanaAI/vllm-fork/pull/433), [#519](https://github.com/HabanaAI/vllm-fork/pull/519))
- - Reduced block fragmentation ([#426](https://github.com/HabanaAI/vllm-fork/pull/426))
- - Enabled FusedSDPA prefill by default ([#447](https://github.com/HabanaAI/vllm-fork/pull/447), [#448](https://github.com/HabanaAI/vllm-fork/pull/448))
- - Offload logits processing to CPU when guided decoding is used ([#358](https://github.com/HabanaAI/vllm-fork/pull/358))
- - Enabled Dynamic MoE layer for Mixtral ([#425](https://github.com/HabanaAI/vllm-fork/pull/425))
- - Enabled INC patching matmuls in paged attention's block2batch and batch2block ([#500](https://github.com/HabanaAI/vllm-fork/pull/500))
- - Optimized multi-step scheduling deepcopy overhead ([#452](https://github.com/HabanaAI/vllm-fork/pull/452))
- - Enabled FP8 patching of more matmul operations in Paged Attention ([#500](https://github.com/HabanaAI/vllm-fork/pull/500))
- - Enabled warmup for multi-step scheduling ([#501](https://github.com/HabanaAI/vllm-fork/pull/501))
- - Added regional compilation support for torch.compile mode ([#595](https://github.com/HabanaAI/vllm-fork/pull/595))
- - Enabled warmup of random sampler ([#506](https://github.com/HabanaAI/vllm-fork/pull/506))
- 
-### Bugfixes
- - Fixed LLaVA-1.5 multi-modal model inference ([#283](https://github.com/HabanaAI/vllm-fork/pull/283))
- - Fixed blocks number calculation for Flat Paged Attention ([#269](https://github.com/HabanaAI/vllm-fork/pull/269))
- - Fixed initialize_ray_cluster device_str bug ([#297](https://github.com/HabanaAI/vllm-fork/pull/297))
- - Fixed calculating slots for warmup ([#310](https://github.com/HabanaAI/vllm-fork/pull/310))
- - Removed padding block from a list of available blocks in allocators ([#313](https://github.com/HabanaAI/vllm-fork/pull/313))
- - Fixed seq_len for padding sequences ([#318](https://github.com/HabanaAI/vllm-fork/pull/318))
- - Fixed LoRA specific conditions in profile_run ([#317](https://github.com/HabanaAI/vllm-fork/pull/317))
- - Removed throwing "Failed to imported from vllm._C" warning on HPU ([#326](https://github.com/HabanaAI/vllm-fork/pull/326))
- - Fixed documentation build warnings ([#330](https://github.com/HabanaAI/vllm-fork/pull/330))
- - Fixed INC FP8 inference after rebase ([#333](https://github.com/HabanaAI/vllm-fork/pull/333))
- - Refined INC shutdown code ([#335](https://github.com/HabanaAI/vllm-fork/pull/335))
- - Fixed torch.compile issue of dispatch key set mismatch ([#299](https://github.com/HabanaAI/vllm-fork/pull/299))
- - Fixed runtime errors reported when using long input sequence lengths with LoRA ([#339](https://github.com/HabanaAI/vllm-fork/pull/339))
- - Fixed hpu_set_env call in load_model in vllm ([#364](https://github.com/HabanaAI/vllm-fork/pull/364))
- - Fixed LoRA tests ([#376](https://github.com/HabanaAI/vllm-fork/pull/376))
- - Removed constraints for bucket creation during warmup in LoRA ([#382](https://github.com/HabanaAI/vllm-fork/pull/382))
- - Fixed lora_manager tests with hpu_model_runner ([#386](https://github.com/HabanaAI/vllm-fork/pull/386))
- - Removed workaround added to resolve multi-card stall issue ([#387](https://github.com/HabanaAI/vllm-fork/pull/387))
- - Added workaround for RuntimeError: "fill_cpu" not implemented for 'Float8_e4m3fn' ([#402](https://github.com/HabanaAI/vllm-fork/pull/402))
- - Fixed SchedulerConfig params ([#459](https://github.com/HabanaAI/vllm-fork/pull/459))
- - Fixed multistep deepcopy overhead ([#452](https://github.com/HabanaAI/vllm-fork/pull/452))
- - Added option to disable duplicates in topk ([#464](https://github.com/HabanaAI/vllm-fork/pull/464))
- - Enabled lazy import of HPU-dependent components ([#363](https://github.com/HabanaAI/vllm-fork/pull/363))
- - Fixed bug: seed_everything function doesn't handle HPU ([#384](https://github.com/HabanaAI/vllm-fork/pull/384))
- - Removed redundant set_active_loras call during warmup ([#413](https://github.com/HabanaAI/vllm-fork/pull/413))
- - Fixed number of blocks when profiling contiguous paged attention ([#496](https://github.com/HabanaAI/vllm-fork/pull/496))
- - Fixed one_hot bug in torch compile mode ([#427](https://github.com/HabanaAI/vllm-fork/pull/427))
- - Fixed execution of empty steps in multi-step scheduling ([#526](https://github.com/HabanaAI/vllm-fork/pull/526))
-
-
-### Other
- - Updated SynapseAI version in README & Dockerfile ([#390](https://github.com/HabanaAI/vllm-fork/pull/390))
- - Updated documentation on support of FP8 ([#288](https://github.com/HabanaAI/vllm-fork/pull/288))
- - Added FP8 inference procedure ([#504](https://github.com/HabanaAI/vllm-fork/pull/504))
- - Fixed broken urls in gaudi-installation ([#473](https://github.com/HabanaAI/vllm-fork/pull/473))
- - Renamed vLLM components from Habana to HPU ([#359](https://github.com/HabanaAI/vllm-fork/pull/359))
- - Introduced bucketing mechanism overhaul and moved bucketing logic to extension ([#394](https://github.com/HabanaAI/vllm-fork/pull/394), [#530](https://github.com/HabanaAI/vllm-fork/pull/530), [#534](https://github.com/HabanaAI/vllm-fork/pull/534))
-
-
-
-## 1.18.0
-### New features
- - Added support FP8 INC inference ([#144](https://github.com/HabanaAI/vllm-fork/pull/144))
- - Added support for FusedSDPA prefills ([#168](https://github.com/HabanaAI/vllm-fork/pull/168))
- - Enabled LoRA support for HPU ([#170](https://github.com/HabanaAI/vllm-fork/pull/170), [#247](https://github.com/HabanaAI/vllm-fork/pull/247))
- - Enabled buckets not warmed-up warnings ([#222](https://github.com/HabanaAI/vllm-fork/pull/222))
- - Enabled Flat Paged Attention optimization ([#169](https://github.com/HabanaAI/vllm-fork/pull/169))
- - Added disable_tensor_cache=True to HPUGraph capture ([#252](https://github.com/HabanaAI/vllm-fork/pull/252))
- - Added support for Mixtral quantization using INC ([#267](https://github.com/HabanaAI/vllm-fork/pull/267))
- - Added option to skip forward pass execution during warmup ([#227](https://github.com/HabanaAI/vllm-fork/pull/227))
- - Added PyTorch profiler integration ([#256](https://github.com/HabanaAI/vllm-fork/pull/256))
- - Added Dockerfile.hpu ([#200](https://github.com/HabanaAI/vllm-fork/pull/200))
- - Added topp/topk calculation sampler optimization ([#195](https://github.com/HabanaAI/vllm-fork/pull/195))
-### Bugfixes
- - HPU Buckets now don't exceed token budget ([#206](https://github.com/HabanaAI/vllm-fork/pull/206))
- - Fixed bug causing incorrect lower bucket bounadry calculation ([#239](https://github.com/HabanaAI/vllm-fork/pull/239))
- - Fixed ALiBi support ([#254](https://github.com/HabanaAI/vllm-fork/pull/254))
- - Fixed HPU guided decoding crashes ([#236](https://github.com/HabanaAI/vllm-fork/pull/236))
- - Fixed incorrect handlign of large bucket minimums ([#235](https://github.com/HabanaAI/vllm-fork/pull/235))
- - Issued Llama-405b workaround for memory allocation error ([#184](https://github.com/HabanaAI/vllm-fork/pull/184))
- - Enabled dispersed dummy cache slots for avoiding caching issues ([#243](https://github.com/HabanaAI/vllm-fork/pull/243))
- - Eliminated Llama and GPTBigCode graph breaks in torch.compile mode ([#202](https://github.com/HabanaAI/vllm-fork/pull/202))
+The following steps address Out of Memory related errors:
+- Increase gpu_memory_utilization - This addresses insufficient overall memory. The vLLM pre-allocates HPU cache by using gpu_memory_utilization% of device memory. By default, gpu_memory_utilization is set to 0.9. By increasing this utilization, you can provide more KV cache space.
+- Decrease max_num_seqs or max_num_batched_tokens - This may reduce the number of concurrent requests in a batch, thereby requiring less KV cache space when overall usable memory is limited.
+- Increase tensor_parallel_size - This approach shards model weights, so each GPU has more memory available for KV cache.
+- For maximizing memory available for KV cache, you can disable `HPUGraph` completely. With HPU Graphs disabled, you are trading latency and throughput at lower batches for potentially higher throughput on higher batches. You can do that by adding `--enforce-eager` flag to the server (for online inference), or by passing `enforce_eager=True` argument to LLM constructor (for offline inference).
