@@ -567,6 +567,8 @@ class RayDistributedExecutor(DistributedExecutorBase):
             _overlap_gpu_communication=envs.
             VLLM_USE_RAY_COMPILED_DAG_OVERLAP_COMM)
 
+    def __del__(self):
+        self.shutdown()
 
     async def execute_model_async(
             self,
