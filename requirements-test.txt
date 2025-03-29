@@ -405,7 +405,7 @@ python-dateutil==2.9.0.post0
     #   matplotlib
     #   pandas
     #   typepy
-pytz==2024.2
+pytz==2025.2
     # via
     #   pandas
     #   typepy
