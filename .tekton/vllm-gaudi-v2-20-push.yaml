@@ -2,11 +2,11 @@ apiVersion: tekton.dev/v1
 kind: PipelineRun
 metadata:
   annotations:
+    build.appstudio.openshift.io/build-nudge-files: config/base/params-vllm-gaudi.env
     build.appstudio.openshift.io/repo: https://github.com/red-hat-data-services/vllm-gaudi?rev={{revision}}
     build.appstudio.redhat.com/commit_sha: '{{revision}}'
     build.appstudio.redhat.com/target_branch: '{{target_branch}}'
     pipelinesascode.tekton.dev/max-keep-runs: "3"
-    build.appstudio.openshift.io/build-nudge-files: "config/base/params-vllm-gaudi.env"
     pipelinesascode.tekton.dev/on-cel-expression: |
       event == "push"
       && target_branch == "rhoai-2.20"
@@ -30,23 +30,6 @@ spec:
     value: Dockerfile.hpu.ubi
   - name: path-context
     value: .
-  taskRunSpecs:
-    - pipelineTaskName: ecosystem-cert-preflight-checks
-      computeResources:
-        requests:
-          cpu: '8'
-          memory: 16Gi
-        limits:
-          cpu: '16'
-          memory: 32Gi
-    - pipelineTaskName: clair-scan
-      computeResources:
-        requests:
-          cpu: '8'
-          memory: 16Gi
-        limits:
-          cpu: '16'
-          memory: 32Gi
   pipelineSpec:
     description: |
       This pipeline is ideal for building container images from a Containerfile while maintaining trust after pipeline customization.
@@ -70,7 +53,7 @@ spec:
     - name: send-slack-notification
       params:
       - name: message
-        value: "$(tasks.rhoai-init.results.slack-message-failure-text)"
+        value: $(tasks.rhoai-init.results.slack-message-failure-text)
       - name: secret-name
         value: rhoai-konflux-secret
       - name: key-name
@@ -88,7 +71,7 @@ spec:
       - input: $(tasks.status)
         operator: in
         values:
-        - "Failed"  
+        - Failed
     params:
     - description: Source Repository URL
       name: git-url
@@ -163,30 +146,33 @@ spec:
     - name: rhoai-init
       params:
       - name: pipelinerun-name
-        value: "$(context.pipelineRun.name)"
+        value: $(context.pipelineRun.name)
       taskSpec:
+        metadata: {}
         results:
         - description: Notification text to be posted to slack
           name: slack-message-failure-text
+        spec: null
         steps:
-        - image: quay.io/rhoai-konflux/alpine:latest
-          name: rhoai-init
+        - computeResources: {}
           env:
           - name: slack_message
             valueFrom:
               secretKeyRef:
-                name: rhoai-konflux-secret
                 key: slack-component-failure-notification
+                name: rhoai-konflux-secret
+          image: quay.io/rhoai-konflux/alpine:latest
+          name: rhoai-init
           script: |
             pipelinerun_name=$(params.pipelinerun-name)
             echo "pipelinerun_name = $pipelinerun_name"
-            
+
             target_branch={{target_branch}}
             echo "target_branch = $target_branch"
 
             application_name=${target_branch/rhoai-/}
             echo "application-name = $application_name"
-            
+
             application_name=rhoai-v${application_name/./-}
             echo "application-name = $application_name"
 
@@ -211,6 +197,8 @@ spec:
         value: $(params.rebuild)
       - name: skip-checks
         value: $(params.skip-checks)
+      runAfter:
+      - rhoai-init
       taskRef:
         params:
         - name: name
@@ -220,8 +208,6 @@ spec:
         - name: kind
           value: task
         resolver: bundles
-      runAfter:
-      - rhoai-init
     - name: clone-repository
       params:
       - name: url
@@ -381,29 +367,28 @@ spec:
         - "true"
     - name: sast-unicode-check
       params:
-        - name: image-url
-          value: $(tasks.build-image-index.results.IMAGE_URL)
-        - name: SOURCE_ARTIFACT
-          value: $(tasks.prefetch-dependencies.results.SOURCE_ARTIFACT)
-        - name: CACHI2_ARTIFACT
-          value: $(tasks.prefetch-dependencies.results.CACHI2_ARTIFACT)
+      - name: image-url
+        value: $(tasks.build-image-index.results.IMAGE_URL)
+      - name: SOURCE_ARTIFACT
+        value: $(tasks.prefetch-dependencies.results.SOURCE_ARTIFACT)
+      - name: CACHI2_ARTIFACT
+        value: $(tasks.prefetch-dependencies.results.CACHI2_ARTIFACT)
       runAfter:
-        - build-image-index
+      - build-image-index
       taskRef:
         params:
-          - name: name
-            value: sast-unicode-check-oci-ta
-          - name: bundle
-            value: quay.io/konflux-ci/tekton-catalog/task-sast-unicode-check-oci-ta:0.1@sha256:424f2f659c02998dc3a43e1ce869e3148982c59adb74f953f8fa91ff1c9ab86e
-          - name: kind
-            value: task
+        - name: name
+          value: sast-unicode-check-oci-ta
+        - name: bundle
+          value: quay.io/konflux-ci/tekton-catalog/task-sast-unicode-check-oci-ta:0.1@sha256:424f2f659c02998dc3a43e1ce869e3148982c59adb74f953f8fa91ff1c9ab86e
+        - name: kind
+          value: task
         resolver: bundles
       when:
-        - input: $(params.skip-checks)
-          operator: in
-          values:
-            - "false"
-      workspaces: []
+      - input: $(params.skip-checks)
+        operator: in
+        values:
+        - "false"
     - name: deprecated-base-image-check
       params:
       - name: IMAGE_URL
@@ -604,7 +589,7 @@ spec:
         value: $(tasks.build-image-index.results.IMAGE_URL)
       - name: ADDITIONAL_TAGS
         value:
-          - '{{target_branch}}-gaudi-{{revision}}'
+        - '{{target_branch}}-gaudi-{{revision}}'
       runAfter:
       - build-image-index
       taskRef:
@@ -666,7 +651,25 @@ spec:
       optional: true
     - name: netrc
       optional: true
-  taskRunTemplate: {}
+  taskRunSpecs:
+  - computeResources:
+      limits:
+        cpu: "16"
+        memory: 32Gi
+      requests:
+        cpu: "8"
+        memory: 16Gi
+    pipelineTaskName: ecosystem-cert-preflight-checks
+  - computeResources:
+      limits:
+        cpu: "16"
+        memory: 32Gi
+      requests:
+        cpu: "8"
+        memory: 16Gi
+    pipelineTaskName: clair-scan
+  taskRunTemplate:
+    serviceAccountName: build-pipeline-vllm-gaudi-v2-20
   workspaces:
   - name: git-auth
     secret:
