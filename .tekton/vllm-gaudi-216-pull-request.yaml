@@ -468,7 +468,8 @@ spec:
       optional: true
     - name: netrc
       optional: true
-  taskRunTemplate: {}
+  taskRunTemplate:
+    serviceAccountName: build-pipeline-vllm-gaudi-216
   workspaces:
   - name: git-auth
     secret:
