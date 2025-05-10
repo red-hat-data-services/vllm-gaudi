@@ -1,13 +1,12 @@
 apiVersion: tekton.dev/v1
 kind: PipelineRun
-#
 metadata:
   annotations:
+    build.appstudio.openshift.io/build-nudge-files: config/base/params-vllm-gaudi.env
     build.appstudio.openshift.io/repo: https://github.com/red-hat-data-services/vllm-gaudi?rev={{revision}}
     build.appstudio.redhat.com/commit_sha: '{{revision}}'
     build.appstudio.redhat.com/target_branch: '{{target_branch}}'
     pipelinesascode.tekton.dev/max-keep-runs: "3"
-    build.appstudio.openshift.io/build-nudge-files: "config/base/params-vllm-gaudi.env"
     pipelinesascode.tekton.dev/on-cel-expression: |
       event == "push"
       && target_branch == "rhoai-2.16"
@@ -31,23 +30,6 @@ spec:
     value: Dockerfile.hpu.ubi
   - name: path-context
     value: .
-  taskRunSpecs:
-    - pipelineTaskName: ecosystem-cert-preflight-checks
-      computeResources:
-        requests:
-          cpu: '8'
-          memory: 16Gi
-        limits:
-          cpu: '16'
-          memory: 32Gi
-    - pipelineTaskName: clair-scan
-      computeResources:
-        requests:
-          cpu: '8'
-          memory: 16Gi
-        limits:
-          cpu: '16'
-          memory: 32Gi
   pipelineSpec:
     description: |
       This pipeline is ideal for building container images from a Containerfile while maintaining trust after pipeline customization.
@@ -431,7 +413,7 @@ spec:
         value: $(tasks.build-image-index.results.IMAGE_URL)
       - name: ADDITIONAL_TAGS
         value:
-          - '{{target_branch}}-gaudi-{{revision}}'
+        - '{{target_branch}}-gaudi-{{revision}}'
       runAfter:
       - build-image-index
       taskRef:
@@ -493,7 +475,25 @@ spec:
       optional: true
     - name: netrc
       optional: true
-  taskRunTemplate: {}
+  taskRunSpecs:
+  - computeResources:
+      limits:
+        cpu: "16"
+        memory: 32Gi
+      requests:
+        cpu: "8"
+        memory: 16Gi
+    pipelineTaskName: ecosystem-cert-preflight-checks
+  - computeResources:
+      limits:
+        cpu: "16"
+        memory: 32Gi
+      requests:
+        cpu: "8"
+        memory: 16Gi
+    pipelineTaskName: clair-scan
+  taskRunTemplate:
+    serviceAccountName: build-pipeline-vllm-gaudi-216
   workspaces:
   - name: git-auth
     secret:
