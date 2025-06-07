@@ -283,7 +283,7 @@ numpy==1.26.4
     #   torchvision
     #   transformers
     #   tritonclient
-nvidia-cublas-cu12==12.4.5.8
+nvidia-cublas-cu12==12.9.1.4
     # via
     #   nvidia-cudnn-cu12
     #   nvidia-cusolver-cu12
