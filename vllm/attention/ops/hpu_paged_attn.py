@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+
 ###############################################################################
 # Copyright (C) 2024 Habana Labs, Ltd. an Intel Company
 ###############################################################################
@@ -20,7 +22,6 @@ class HPUPagedAttentionMetadata:
     block_usage: Optional[torch.Tensor]
     block_indices: Optional[torch.Tensor]
     block_offsets: Optional[torch.Tensor]
-    block_scales: Optional[torch.Tensor]
     block_groups: Optional[torch.Tensor]
 
 
@@ -28,7 +29,7 @@ class HPUPagedAttention:
 
     @staticmethod
     def get_supported_head_sizes() -> List[int]:
-        return [64, 80, 96, 112, 128, 256]
+        return list(range(1, 257))
 
     @staticmethod
     def get_kv_cache_shape(
@@ -60,11 +61,9 @@ class HPUPagedAttention:
 
     @staticmethod
     def forward_decode(**kwargs) -> torch.Tensor:
+        if kwargs.get("kv_lora_rank"):
+            return ops.flat_pa_mla(**kwargs)
         return ops.flat_pa(**kwargs)
-
-    @staticmethod
-    def forward_prefix(**kwargs) -> torch.Tensor:
-        return ops.prompt_attention_with_context(**kwargs)
 
     @staticmethod
     def swap_blocks(

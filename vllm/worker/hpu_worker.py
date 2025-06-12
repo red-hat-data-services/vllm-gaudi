@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+
 ###############################################################################
 # Copyright (C) 2024 Habana Labs, Ltd. an Intel Company
 ###############################################################################
@@ -14,11 +16,13 @@ from typing import List, Optional, Set, Tuple, Type
 import habana_frameworks.torch as htorch  # noqa:F401
 import torch
 import torch.distributed
+from habana_frameworks.torch.utils.debug.logger import (
+    refresh_logging_folder_path)
 from vllm_hpu_extension.profiler import HabanaMemoryProfiler, format_bytes
 
 import vllm.envs as envs
 from vllm.config import ParallelConfig, VllmConfig
-from vllm.distributed import (ensure_model_parallel_initialized,
+from vllm.distributed import (ensure_model_parallel_initialized, get_pp_group,
                               init_distributed_environment)
 from vllm.logger import init_logger
 from vllm.lora.request import LoRARequest
@@ -31,6 +35,7 @@ from vllm.utils import (bind_kv_cache, hpu_backend_string, hpu_device_string,
 from vllm.worker.cache_engine import CacheEngine
 from vllm.worker.hpu_enc_dec_model_runner import HPUEncoderDecoderModelRunner
 from vllm.worker.hpu_model_runner import HPUModelRunner, HPUModelRunnerBase
+from vllm.worker.hpu_pooling_model_runner import HPUPoolingModelRunner
 from vllm.worker.worker_base import (LocalOrDistributedWorkerBase, WorkerBase,
                                      WorkerInput)
 
@@ -60,8 +65,9 @@ class HPUWorker(LocalOrDistributedWorkerBase):
         self.rank = rank
         self.distributed_init_method = distributed_init_method
         self.is_driver_worker = is_driver_worker
-        if self.is_driver_worker:
-            assert self.rank == 0, "The driver worker must have rank 0."
+        if self.parallel_config and self.is_driver_worker:
+            assert self.rank % self.parallel_config.tensor_parallel_size == 0, \
+            "The driver worker must have rank 0."
 
         if self.model_config.trust_remote_code:
             # note: lazy import to avoid importing torch before initializing
@@ -81,13 +87,17 @@ class HPUWorker(LocalOrDistributedWorkerBase):
 
         is_encoder_decoder_model = self._is_encoder_decoder_model()
         ModelRunnerClass: Type[HPUModelRunnerBase] = HPUModelRunner
-        if is_encoder_decoder_model:
+        is_causal = True
+        if self.model_config.runner_type == "pooling":
+            ModelRunnerClass = HPUPoolingModelRunner
+        elif is_encoder_decoder_model:
             ModelRunnerClass = HPUEncoderDecoderModelRunner
         self.model_runner: HPUModelRunnerBase = ModelRunnerClass(
             vllm_config=vllm_config,
             kv_cache_dtype=self.cache_config.cache_dtype,
             is_driver_worker=is_driver_worker,
             **speculative_args,
+            is_causal=is_causal,
         )
         if model_runner_cls is not None:
             self.model_runner = model_runner_cls(self.model_runner)
@@ -207,8 +217,8 @@ class HPUWorker(LocalOrDistributedWorkerBase):
             raise RuntimeError(
                 f"Not support device type: {self.device_config.device}")
         # Initialize the distributed environment.
-        if self.model_config.quantization == 'inc':
-            self._set_env_vars()
+        self._set_env_vars()
+        refresh_logging_folder_path()
         init_worker_distributed_environment(self.parallel_config, self.rank,
                                             self.distributed_init_method,
                                             self.local_rank)
@@ -217,6 +227,13 @@ class HPUWorker(LocalOrDistributedWorkerBase):
 
     def load_model(self):
         self.model_runner.load_model()
+        if isinstance(self.model_runner, HPUPoolingModelRunner):
+            # recipes we will use the extra memory for graphs/blocks
+            free_hpu_memory = torch.hpu.mem_get_info()[0]
+            hpu_memory_margin = free_hpu_memory * (
+                1 - self.cache_config.gpu_memory_utilization)
+            self.model_runner.mem_margin = hpu_memory_margin
+            self._warm_up_model()
 
     def execute_model(
         self,
@@ -235,8 +252,8 @@ class HPUWorker(LocalOrDistributedWorkerBase):
             'VLLM_HPU_LOG_STEP_CPU_FALLBACKS_ALL', '0') != '0'
         log_cpu_fallbacks = os.environ.get('VLLM_HPU_LOG_STEP_CPU_FALLBACKS',
                                            '0') != '0' or log_cpu_fallbacks_all
-        if (log_graph_compilation or log_cpu_fallbacks) \
-            and execute_model_req is not None:
+        if (log_graph_compilation or log_cpu_fallbacks) and \
+            execute_model_req is not None:
             from habana_frameworks.torch.hpu.metrics import metric_localcontext
             seq_group_metadata_list = execute_model_req.seq_group_metadata_list
             is_prompt = any([
@@ -265,13 +282,13 @@ class HPUWorker(LocalOrDistributedWorkerBase):
                 cpu_fallback_ctx as cpu_fallback_local_metric:
                 output = LocalOrDistributedWorkerBase.execute_model(
                     self, execute_model_req)
-            if (log_graph_compilation and gc_local_metric.stats()[0][1] > 0
-                ) or log_graph_compilation_all:
+            if (log_graph_compilation and gc_local_metric.stats()[0][1]
+                    > 0) or log_graph_compilation_all:
                 msg = ("VLLM_HPU_STEP_GRAPH_COMPILATION: "
                        f"{gc_local_metric.stats()}, {input_stats}")
                 logger.warning(msg)
-            if (log_cpu_fallbacks and cpu_fallback_local_metric.stats()[0][1] >
-                    0) or log_cpu_fallbacks_all:
+            if (log_cpu_fallbacks and cpu_fallback_local_metric.stats()[0][1]
+                    > 0) or log_cpu_fallbacks_all:
                 msg = ("VLLM_HPU_STEP_CPU_FALLBACK: "
                        f"{cpu_fallback_local_metric.stats()}, {input_stats}")
                 logger.warning(msg)
@@ -388,8 +405,11 @@ class HPUWorker(LocalOrDistributedWorkerBase):
     def _warm_up_model(self) -> None:
         # NOTE(kzawora): We should use virtual engine index here
         # for pipeline parallelism. Using 0 for now.
-        assert self.hpu_cache is not None
-        self.model_runner.warmup_model(self.hpu_cache[0])
+        if not isinstance(self.model_runner, HPUPoolingModelRunner):
+            assert self.hpu_cache is not None
+            self.model_runner.warmup_model(self.hpu_cache[0])
+        else:
+            self.model_runner.warmup_model(None)
         # Reset the seed to ensure that the random state is not affected by
         # the model initialization and profiling.
         set_random_seed(self.model_config.seed)
@@ -511,6 +531,10 @@ def init_worker_distributed_environment(
     ensure_model_parallel_initialized(parallel_config.tensor_parallel_size,
                                       parallel_config.pipeline_parallel_size)
 
+    if parallel_config.pipeline_parallel_size > 1:
+        # torch-ccl xpu need a collective API warm up
+        # before calling send/recv API
+        get_pp_group().all_reduce(torch.zeros(1).to('hpu'))
     if torch.distributed.is_initialized():
         torch_world_size = torch.distributed.get_world_size()
         if torch_world_size != parallel_config.world_size:
@@ -566,16 +590,21 @@ class HPUCacheEngine(CacheEngine):
         """Allocates KV cache on the specified device."""
         kv_cache_shape = self.attn_backend.get_kv_cache_shape(
             num_blocks, self.block_size, self.num_kv_heads, self.head_size)
+        k_cache_shape = kv_cache_shape
+        v_cache_shape = None if self.model_config.use_mla else kv_cache_shape
         kv_cache: List[Tuple[torch.Tensor, torch.Tensor]] = []
         dtype = self.dtype
         if device != 'hpu' and not is_fake_hpu() \
           and self.dtype == torch.float8_e4m3fn:
             dtype = torch.uint8
         for _ in range(self.num_attention_layers):
-            key_cache = torch.zeros(kv_cache_shape, dtype=dtype, device=device)
-            value_cache = torch.zeros(kv_cache_shape,
-                                      dtype=dtype,
-                                      device=device)
+            key_cache = torch.zeros(k_cache_shape, dtype=dtype, device=device)
+            if v_cache_shape is not None:
+                value_cache = torch.zeros(v_cache_shape,
+                                          dtype=dtype,
+                                          device=device)
+            else:
+                value_cache = None
             kv_layer = (key_cache, value_cache)
             kv_cache.append(kv_layer)
         return kv_cache
