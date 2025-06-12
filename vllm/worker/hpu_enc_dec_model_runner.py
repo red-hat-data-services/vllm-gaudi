@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 import dataclasses
 import gc
 import itertools
@@ -8,7 +9,6 @@ from typing import TYPE_CHECKING, Any, Dict, List, Optional, Type, Union, cast
 
 import habana_frameworks.torch as htorch
 import torch
-from vllm_hpu_extension.ops import batch2block, block2batch
 
 from vllm.attention import AttentionMetadata
 from vllm.distributed import broadcast_tensor_dict
@@ -41,8 +41,8 @@ _PAD_BLOCK_ID = 0
 
 class HpuModelAdapterEncoderDecoder(HpuModelAdapter):
 
-    def __init__(self, model, vllm_config, layer_names):
-        super().__init__(model, vllm_config, layer_names)
+    def __init__(self, model, vllm_config, layer_names, is_causal):
+        super().__init__(model, vllm_config, layer_names, is_causal)
 
         # We only wrap the language model in HPU graph because some Ops in
         # vision model will fallback to CPU and cause the graph building fail.
@@ -83,17 +83,6 @@ class HpuModelAdapterEncoderDecoder(HpuModelAdapter):
                                      cross_attn_bias=cross_attn_bias)
         return metadata
 
-    def _set_cross_block_scales(self, metadata, device):
-        cross_block_mapping = metadata.cross_block_mapping
-        ones = torch.ones((cross_block_mapping.size(0), ),
-                          device=device,
-                          dtype=cross_block_mapping.dtype)
-        sums = batch2block(block2batch(ones, cross_block_mapping),
-                           cross_block_mapping)
-        cross_block_scales = torch.reciprocal(torch.maximum(ones, sums))
-        metadata = metadata._replace(cross_block_scales=cross_block_scales)
-        return metadata
-
     def _set_cross_indices_and_offsets(self, metadata, block_size):
         cross_slot_mapping = metadata.cross_slot_mapping.flatten()
         indices = torch.div(cross_slot_mapping,
@@ -127,7 +116,6 @@ class HpuModelAdapterEncoderDecoder(HpuModelAdapter):
         else:
             attn_metadata = self._set_cross_block_mapping(
                 attn_metadata, batch_size, device, dtype)
-            attn_metadata = self._set_cross_block_scales(attn_metadata, device)
 
         return attn_metadata
 
@@ -445,18 +433,24 @@ class HPUEncoderDecoderModelRunner(
         sampling_params = SamplingParams(temperature=temperature)
         num_blocks = math.ceil(seq_len / self.block_size)
         cross_block_table: Optional[List[int]] = None
-        encoder_dummy_data \
-            = self.input_registry.dummy_data_for_profiling(
-                self.model_config,
-                                        seq_len,
-                                        self.mm_registry,
-                                        is_encoder_data=True)
+        seq_len = max(seq_len, 1)
         mm_counts = self.mm_registry.get_mm_limits_per_prompt(
             self.model_config)
         num_images = mm_counts["image"]
         max_mm_tokens = self.mm_registry.get_max_multimodal_tokens(
             self.model_config) * num_images
-        seq_len = max(seq_len, 1)
+        decoder_dummy_data \
+            = self.input_registry.dummy_data_for_profiling(
+                self.model_config,
+                seq_len,
+                self.mm_registry,
+                is_encoder_data=False)
+        encoder_dummy_data \
+            = self.input_registry.dummy_data_for_profiling(
+                self.model_config,
+                max_mm_tokens,
+                self.mm_registry,
+                is_encoder_data=True)
         if is_prompt:
             input_len = seq_len
             output_len = 0
@@ -477,12 +471,14 @@ class HPUEncoderDecoderModelRunner(
         seq_data.output_token_ids = output_token_ids
         return SequenceGroupMetadata(
             request_id=str(group_id),
-            is_prompt=(output_len == 0),
+            is_prompt=is_prompt,
             seq_data={group_id: seq_data},
             sampling_params=sampling_params,
             block_tables=block_tables,
             encoder_seq_data=encoder_dummy_data.seq_data,
-            multi_modal_data=encoder_dummy_data.multi_modal_data,
+            multi_modal_data=decoder_dummy_data.multi_modal_data,
+            multi_modal_placeholders=decoder_dummy_data.
+            multi_modal_placeholders,
             cross_block_table=cross_block_table)
 
     def trim_attn_metadata(self, metadata: AttentionMetadata) -> object:
@@ -517,7 +513,6 @@ class HPUEncoderDecoderModelRunner(
             'is_prompt',
             'block_indices',
             'block_offsets',
-            'block_scales',
             'block_groups',
             'num_prefill_tokens',
             'num_decode_tokens',
@@ -531,7 +526,6 @@ class HPUEncoderDecoderModelRunner(
             'cross_slot_mapping',
             'cross_block_mapping',
             'cross_block_groups',
-            'cross_block_scales',
             'cross_block_usage',
             'cross_attn_bias',
         ])

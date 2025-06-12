@@ -1,10 +1,14 @@
-ARG BASE_IMAGE=vault.habana.ai/gaudi-docker/1.20.0/rhel9.4/habanalabs/pytorch-installer-2.6.0:1.20.0-543
+## Global Args #################################################################
+ARG BASE_IMAGE=vault.habana.ai/gaudi-docker/1.21.0/rhel9.4/habanalabs/pytorch-installer-2.6.0:latest
+ARG VLLM_VERSION
+ARG VLLM_TGIS_ADAPTER_VERSION="0.7.1"
+ARG max_jobs=6
+ARG nvcc_threads=2
+
+## Base Layer ##################################################################
 FROM ${BASE_IMAGE} as habana-base
 
 USER root
-
-ENV VLLM_TARGET_DEVICE="hpu"
-ENV HABANA_SOFTWARE_VERSION="1.20.0-543"
 
 RUN dnf -y update --best --allowerasing --skip-broken && dnf clean all
 
@@ -18,8 +22,8 @@ ARG PYTHON_VERSION=3.11
 ENV VIRTUAL_ENV=/opt/vllm
 ENV PATH="$VIRTUAL_ENV/bin:$PATH"
 RUN dnf install -y --setopt=install_weak_deps=0 --nodocs \
-    python${PYTHON_VERSION}-devel python${PYTHON_VERSION}-pip python${PYTHON_VERSION}-wheel && \
-    python${PYTHON_VERSION} -m venv $VIRTUAL_ENV --system-site-packages && pip install --no-cache -U pip wheel setuptools && dnf clean all
+    python${PYTHON_VERSION}-wheel && \
+    python${PYTHON_VERSION} -m venv $VIRTUAL_ENV --system-site-packages && pip install --no-cache -U pip wheel && dnf clean all
 
 ## Python Habana base #################################################################
 FROM python-install as python-habana-base
@@ -47,25 +51,32 @@ COPY CMakeLists.txt CMakeLists.txt
 COPY requirements-common.txt requirements-common.txt
 COPY requirements-hpu.txt requirements-hpu.txt
 COPY pyproject.toml pyproject.toml
+COPY vllm vllm
 
 # max jobs used by Ninja to build extensions
 ARG max_jobs=2
 ENV MAX_JOBS=${max_jobs}
+# number of threads used by nvcc
+ARG nvcc_threads
+ENV NVCC_THREADS=$nvcc_threads
+
+ARG VLLM_VERSION
 # # make sure punica kernels are built (for LoRA)
 # HPU currently doesn't support LoRA
 # ENV VLLM_INSTALL_PUNICA_KERNELS=1
-
-# Copy the entire directory before building wheel
-COPY vllm vllm
 
 ENV CCACHE_DIR=/root/.cache/ccache
 RUN --mount=type=cache,target=/root/.cache/ccache \
     --mount=type=cache,target=/root/.cache/pip \
     --mount=type=bind,src=.git,target=/workspace/.git \
     env CFLAGS="-march=haswell" \
-    CXXFLAGS="$CFLAGS $CXXFLAGS" \
-    CMAKE_BUILD_TYPE=Release \
-    python3 setup.py bdist_wheel --dist-dir=dist
+        VLLM_TARGET_DEVICE="hpu" \
+        PT_HPU_ENABLE_LAZY_COLLECTIVES=true \
+        CXXFLAGS="$CFLAGS $CXXFLAGS" \
+        CMAKE_BUILD_TYPE=Release \
+        SETUPTOOLS_SCM_PRETEND_VERSION="${VLLM_VERSION}" \
+        TORCH_DEVICE_BACKEND_AUTOLOAD=0 \
+        python3 setup.py bdist_wheel --dist-dir=dist
 
 #################### libsodium Build IMAGE ####################
 FROM habana-base as libsodium-builder
@@ -99,7 +110,7 @@ RUN dnf install -y --setopt=install_weak_deps=0 --nodocs gcc \
 # install vllm wheel first, so that torch etc will be installed
 RUN --mount=type=bind,from=build,src=/workspace/dist,target=/workspace/dist \
     --mount=type=cache,target=/root/.cache/pip \
-    pip install $(echo dist/*.whl)'[tensorizer]' "jinja2>=3.1.5" --verbose
+    pip install $(echo dist/*.whl)'[tensorizer]' --verbose
 
 # Install libsodium for Tensorizer encryption
 RUN --mount=type=bind,from=libsodium-builder,src=/usr/src/libsodium,target=/usr/src/libsodium \
@@ -107,32 +118,34 @@ RUN --mount=type=bind,from=libsodium-builder,src=/usr/src/libsodium,target=/usr/
     && make install
 
 ENV HF_HUB_OFFLINE=1 \
-    PORT=8000 \
     HOME=/home/vllm \
     VLLM_USAGE_SOURCE=production-docker-image \
-    VLLM_NO_USAGE_STATS=1 \
-    PT_HPU_MAX_COMPOUND_OP_SIZE=10
+    VLLM_NO_USAGE_STATS=1
 
 # setup non-root user for OpenShift
-RUN umask 002 \
-    && useradd --uid 2000 --gid 0 vllm \
-    && chmod g+rwx $HOME /usr/src /workspace
+RUN umask 002 && \
+    useradd --uid 2000 --gid 0 vllm && \
+    mkdir -p /home/vllm && \
+    chown -R vllm /home/vllm && \
+    chmod g+rwx /home/vllm
 
 COPY LICENSE /licenses/vllm.md
-
-# Copy only .jinja files from example directory to template directory
 COPY examples/*.jinja /app/data/template/
 
 USER 2000
+WORKDIR /home/vllm
+
 ENTRYPOINT ["python3", "-m", "vllm.entrypoints.openai.api_server"]
 
+## vllm-grpc-adapter #####################################################################
 FROM vllm-openai as vllm-grpc-adapter
 
 USER root
 
+ARG VLLM_TGIS_ADAPTER_VERSION
 RUN --mount=type=cache,target=/root/.cache/pip \
     --mount=type=bind,from=build,src=/workspace/dist,target=/workspace/dist \
-    pip install $(echo dist/*.whl)'[tensorizer]' vllm-tgis-adapter==0.6.2
+    pip install vllm-tgis-adapter==${VLLM_TGIS_ADAPTER_VERSION}
 
 ENV GRPC_PORT=8033 \
     PORT=8000 \

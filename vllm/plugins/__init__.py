@@ -1,5 +1,10 @@
+# SPDX-License-Identifier: Apache-2.0
+
 import logging
+import os
 from typing import Callable, Dict
+
+import torch
 
 import vllm.envs as envs
 
@@ -51,6 +56,18 @@ def load_general_plugins():
     if plugins_loaded:
         return
     plugins_loaded = True
+
+    # some platform-specific configurations
+    from vllm.platforms import current_platform
+
+    if current_platform.is_xpu():
+        # see https://github.com/pytorch/pytorch/blob/43c5f59/torch/_dynamo/config.py#L158
+        torch._dynamo.config.disable = True
+    elif current_platform.is_hpu():
+        os.environ['PT_HPU_ENABLE_LAZY_COLLECTIVES'] = 'true'
+        import habana_frameworks.torch as htorch
+        if htorch.utils.internal.is_lazy():
+            torch._dynamo.config.disable = True
     plugins = load_plugins_by_group(group='vllm.general_plugins')
     # general plugins, we only need to execute the loaded functions
     for func in plugins.values():
