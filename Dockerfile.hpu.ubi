@@ -10,26 +10,12 @@ FROM ${BASE_IMAGE} as habana-base
 
 USER root
 
-RUN dnf -y update --best --allowerasing --skip-broken && dnf clean all
-
 WORKDIR /workspace
 
-## Python Installer #################################################################
-FROM habana-base as python-install
-
-ARG PYTHON_VERSION=3.11
-
-ENV VIRTUAL_ENV=/opt/vllm
-ENV PATH="$VIRTUAL_ENV/bin:$PATH"
-RUN dnf install -y --setopt=install_weak_deps=0 --nodocs \
-    python${PYTHON_VERSION}-wheel && \
-    python${PYTHON_VERSION} -m venv $VIRTUAL_ENV --system-site-packages && pip install --no-cache -U pip wheel && dnf clean all
+ENV PIP_NO_CACHE_DIR=0
 
 ## Python Habana base #################################################################
-FROM python-install as python-habana-base
-
-ENV VIRTUAL_ENV=/opt/vllm
-ENV PATH="$VIRTUAL_ENV/bin:$PATH"
+FROM habana-base as python-habana-base
 
 # install Habana Software and common dependencies
 RUN --mount=type=cache,target=/root/.cache/pip \
@@ -54,7 +40,7 @@ COPY pyproject.toml pyproject.toml
 COPY vllm vllm
 
 # max jobs used by Ninja to build extensions
-ARG max_jobs=2
+ARG max_jobs
 ENV MAX_JOBS=${max_jobs}
 # number of threads used by nvcc
 ARG nvcc_threads
@@ -70,12 +56,11 @@ RUN --mount=type=cache,target=/root/.cache/ccache \
     --mount=type=cache,target=/root/.cache/pip \
     --mount=type=bind,src=.git,target=/workspace/.git \
     env CFLAGS="-march=haswell" \
-        VLLM_TARGET_DEVICE="hpu" \
         PT_HPU_ENABLE_LAZY_COLLECTIVES=true \
+        VLLM_TARGET_DEVICE=hpu \
         CXXFLAGS="$CFLAGS $CXXFLAGS" \
         CMAKE_BUILD_TYPE=Release \
         SETUPTOOLS_SCM_PRETEND_VERSION="${VLLM_VERSION}" \
-        TORCH_DEVICE_BACKEND_AUTOLOAD=0 \
         python3 setup.py bdist_wheel --dist-dir=dist
 
 #################### libsodium Build IMAGE ####################
@@ -96,12 +81,9 @@ RUN CFLAGS="-O3 -Wall -Werror=format-security -Wno-unused-function -Wp,-D_GLIBCX
     ./configure --prefix="/usr/" && make -j $MAX_JOBS && make check
 
 ## Release #####################################################################
-FROM python-install AS vllm-openai
+FROM habana-base AS vllm-openai
 
 WORKDIR /workspace
-
-ENV VIRTUAL_ENV=/opt/vllm
-ENV PATH=$VIRTUAL_ENV/bin/:$PATH
 
 # Triton needs a CC compiler
 RUN dnf install -y --setopt=install_weak_deps=0 --nodocs gcc \
