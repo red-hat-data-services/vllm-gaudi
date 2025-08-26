@@ -1,6 +1,6 @@
 ## Global Args #################################################################
 ARG BASE_IMAGE=vault.habana.ai/gaudi-docker/1.21.0/rhel9.4/habanalabs/pytorch-installer-2.6.0:latest
-ARG VLLM_VERSION
+ARG VLLM_VERSION="v0.7.2"
 ARG VLLM_TGIS_ADAPTER_VERSION="0.7.1"
 ARG max_jobs=6
 ARG nvcc_threads=2
