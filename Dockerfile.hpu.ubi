@@ -1,6 +1,6 @@
 ## Global Args #################################################################
-ARG BASE_IMAGE=vault.habana.ai/gaudi-docker/1.21.0/rhel9.4/habanalabs/pytorch-installer-2.6.0:latest
-ARG VLLM_VERSION="v0.7.2"
+ARG BASE_IMAGE=vault.habana.ai/gaudi-docker/1.21.3/rhel9.4/habanalabs/pytorch-installer-2.6.0:latest
+ARG VLLM_VERSION="v0.8.5"
 ARG VLLM_TGIS_ADAPTER_VERSION="0.7.1"
 ARG max_jobs=6
 ARG nvcc_threads=2
@@ -17,12 +17,13 @@ ENV PIP_NO_CACHE_DIR=0
 ## Python Habana base #################################################################
 FROM habana-base as python-habana-base
 
+COPY requirements/common.txt requirements/common.txt
+COPY requirements/hpu.txt requirements/hpu.txt
+
 # install Habana Software and common dependencies
 RUN --mount=type=cache,target=/root/.cache/pip \
-    --mount=type=bind,source=requirements-common.txt,target=requirements-common.txt \
-    --mount=type=bind,source=requirements-hpu.txt,target=requirements-hpu.txt \
     pip install \
-    -r requirements-hpu.txt
+    -r requirements/hpu.txt
 
 ## Builder #####################################################################
 FROM python-habana-base AS build
@@ -34,8 +35,8 @@ COPY csrc csrc
 COPY setup.py setup.py
 COPY cmake cmake
 COPY CMakeLists.txt CMakeLists.txt
-COPY requirements-common.txt requirements-common.txt
-COPY requirements-hpu.txt requirements-hpu.txt
+COPY requirements/common.txt requirements/common.txt
+COPY requirements/hpu.txt requirements/hpu.txt
 COPY pyproject.toml pyproject.toml
 COPY vllm vllm
 
@@ -105,7 +106,7 @@ USER root
 ARG VLLM_TGIS_ADAPTER_VERSION
 RUN --mount=type=cache,target=/root/.cache/pip \
     --mount=type=bind,from=build,src=/workspace/dist,target=/workspace/dist \
-    pip install vllm-tgis-adapter==${VLLM_TGIS_ADAPTER_VERSION}
+    pip install vllm-tgis-adapter==${VLLM_TGIS_ADAPTER_VERSION} --no-deps
 
 ENV GRPC_PORT=8033 \
     PORT=8000 \

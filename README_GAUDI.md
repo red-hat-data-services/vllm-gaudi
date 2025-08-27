@@ -12,7 +12,7 @@ To achieve the best performance on HPU, please follow the methods outlined in th
 
 - Python 3.10
 - Intel Gaudi 2 and 3 AI accelerators
-- Intel Gaudi software version 1.21.0 and above
+- Intel Gaudi software version 1.21.3 and above
 
 ## Quick Start Using Dockerfile
 Set up the container with the latest Intel Gaudi Software Suite release using the Dockerfile.
@@ -59,8 +59,8 @@ Refer to the [Intel Gaudi documentation](https://docs.habana.ai/en/latest/Instal
 Use the following commands to run a Docker image. Make sure to update the versions below as listed in the [Support Matrix](https://docs.habana.ai/en/latest/Support_Matrix/Support_Matrix.html):
 
 ```{.console}
-$ docker pull vault.habana.ai/gaudi-docker/1.21.0/ubuntu22.04/habanalabs/pytorch-installer-2.6.0:latest
-$ docker run -it --runtime=habana -e HABANA_VISIBLE_DEVICES=all -e OMPI_MCA_btl_vader_single_copy_mechanism=none --cap-add=sys_nice --net=host --ipc=host vault.habana.ai/gaudi-docker/1.21.0/ubuntu22.04/habanalabs/pytorch-installer-2.6.0:latest
+$ docker pull vault.habana.ai/gaudi-docker/1.21.3/ubuntu22.04/habanalabs/pytorch-installer-2.6.0:latest
+$ docker run -it --runtime=habana -e HABANA_VISIBLE_DEVICES=all -e OMPI_MCA_btl_vader_single_copy_mechanism=none --cap-add=sys_nice --net=host --ipc=host vault.habana.ai/gaudi-docker/1.21.3/ubuntu22.04/habanalabs/pytorch-installer-2.6.0:latest
 ```
 
 ### Build and Install vLLM
@@ -74,7 +74,7 @@ vLLM releases are being performed periodically to align with Intel® Gaudi® sof
 ```{.console}
 $ git clone https://github.com/HabanaAI/vllm-fork.git
 $ cd vllm-fork
-$ git checkout v0.7.2+Gaudi-1.21.0
+$ git checkout v0.8.5+Gaudi-1.21.3
 $ pip install -r requirements-hpu.txt
 $ python setup.py develop
 ```
@@ -129,7 +129,7 @@ $ python setup.py develop
 | vLLM v1 architecture (early release)   | V1 architecture is now available for the HPU backend, and will gradually enable it for every use case we plan to support.   | [Documentation](https://docs.vllm.ai/en/latest/serving/distributed_serving.html) |
 | Guided decode   | vLLM HPU supports a guided decoding backend for generating structured outputs.   | [Documentation](https://docs.vllm.ai/en/latest/features/structured_outputs.html)  |
 | Delayed Sampling  (experimental) | vLLM HPU supports delayed sampling scheduling for asynchronous execution, enabled by `VLLM_DELAYED_SAMPLING=true` environment variable.   | N/A |
-| Exponential bucketing (experimental) | vLLM HPU supports exponential bucketing spacing instead of linear to automate configuration of bucketing mechanism, enabled by `VLLM_EXPONENTIAL_BUCKETING=true` environment variable.   | N/A |
+| Exponential bucketing | vLLM HPU supports exponential bucketing spacing instead of linear to automate configuration of bucketing mechanism, enabled by `VLLM_EXPONENTIAL_BUCKETING=true` environment variable.   | N/A |
 
 > [!NOTE]
 > All specified features are also supported with the `-- enforce-eager` flag.
@@ -140,7 +140,9 @@ $ python setup.py develop
 - Prefill chunking (mixed-batch inferencing)
 
 # Validated Models and Configurations
+# Validated Models and Configurations
 
+The following configurations have been validated to function with Gaudi 2 or Gaudi 3 devices with random or greedy sampling. Configurations that are not listed may or may not work.
 The following configurations have been validated to function with Gaudi 2 or Gaudi 3 devices with random or greedy sampling. Configurations that are not listed may or may not work.
 
 | **Model**   | **Tensor Parallelism [x HPU]**   | **Datatype**    | **Validated on**    |
@@ -182,6 +184,7 @@ The following configurations have been validated to function with Gaudi 2 or Gau
 ## Execution Modes
 
 Currently, vLLM for HPU supports four execution modes, determined by the selected HPU PyTorch Bridge backend (via the `PT_HPU_LAZY_MODE` environment variable) and the `--enforce-eager` flag.
+Currently, vLLM for HPU supports four execution modes, determined by the selected HPU PyTorch Bridge backend (via the `PT_HPU_LAZY_MODE` environment variable) and the `--enforce-eager` flag.
 
 | `PT_HPU_LAZY_MODE` | `enforce_eager` | Execution Mode     |
 | ------------------ | --------------- | ------------------ |
@@ -195,12 +198,18 @@ Currently, vLLM for HPU supports four execution modes, determined by the selecte
 
 > [!TIP]
 > We recommend experimenting with the `PT_HPU_LAZY_MODE` environment variable to determine whether HPU Graphs or `torch.compile` mode performs better for your specific use case. While both modes generally deliver comparable performance, certain edge cases may favor one over the other.
+> [!NOTE]
+> Starting with the 1.21.0 Intel Gaudi software release, the `torch.compile` execution mode is the default for vLLM. HPU Graphs mode remains supported to ensure backward compatibility. Please verify the compatibility of the `torch.compile` mode with the information in the [Supported Features](https://github.com/HabanaAI/vllm-fork/blob/habana_main/README_GAUDI.md#supported-features) table.
+
+> [!TIP]
+> We recommend experimenting with the `PT_HPU_LAZY_MODE` environment variable to determine whether HPU Graphs or `torch.compile` mode performs better for your specific use case. While both modes generally deliver comparable performance, certain edge cases may favor one over the other.
 
 ## Bucketing Mechanism
 
 Intel Gaudi accelerators perform best when operating on models with fixed tensor shapes. [Intel Gaudi Graph Compiler](https://docs.habana.ai/en/latest/Gaudi_Overview/Intel_Gaudi_Software_Suite.html#graph-compiler-and-runtime)
 generates optimized binary code that implements the given model topology on Gaudi. In its default configuration, the produced binary code may be highly dependent on input and output tensor shapes, requiring graph recompilation
 when encountering tensors with different shapes within the same topology. While these binaries efficiently utilize Gaudi, the compilation process itself can introduce noticeable overhead in end-to-end execution.
+In dynamic inference serving scenarios, minimizing the number of graph compilations and reducing the risk of graph compilation occurring during server runtime is important. Currently, this is achieved by
 In dynamic inference serving scenarios, minimizing the number of graph compilations and reducing the risk of graph compilation occurring during server runtime is important. Currently, this is achieved by
 "bucketing" the model's forward pass across two dimensions: `batch_size` and `sequence_length`.
 
@@ -292,8 +301,7 @@ When HPU Graphs are used, they share the common memory pool ("usable memory") wi
 the model weights are loaded onto the device, and a forward pass of the model is executed on dummy data to estimate memory usage. Only after that, the `gpu_memory_utilization` flag is applied. At its default value,
 it marks 90% of the free device memory at that point as usable. Next, the KV cache is allocated, the model is warmed up, and HPU Graphs are captured. The `VLLM_GRAPH_RESERVED_MEM` environment variable defines
 the ratio of memory reserved for HPU Graph capture. With its default value (`VLLM_GRAPH_RESERVED_MEM=0.1`), 10% of the usable memory will be reserved for graph capture (referred to as "usable graph memory"),
-and the remaining 90% will be used for the KV cache. The environment variable `VLLM_GRAPH_PROMPT_RATIO` determines the ratio of usable graph memory reserved for prefill and decode graphs. By default
-(`VLLM_GRAPH_PROMPT_RATIO=0.3`), both stages share equal memory constraints. A lower value corresponds to less usable graph memory reserved for the prefill stage. For example, setting `VLLM_GRAPH_PROMPT_RATIO=0.2`
+and the remaining 90% will be used for the KV cache. The environment variable `VLLM_GRAPH_PROMPT_RATIO` determines the ratio of usable graph memory reserved for prefill and decode graphs. A lower value corresponds to less usable graph memory reserved for the prefill stage. For example, setting `VLLM_GRAPH_PROMPT_RATIO=0.2`
 reserves 20% of usable graph memory for prefill graphs, while 80% is allocated for decode graphs.
 
 > [!NOTE]
@@ -368,8 +376,10 @@ INFO 08-02 17:38:43 hpu_executor.py:91] init_cache_engine took 37.92 GiB of devi
   Disabled by default.
 - `VLLM_HPU_LOG_STEP_GRAPH_COMPILATION_ALL`: if `true` - logs graph compilations for every vLLM engine step, even if no compilation occurs. Disabled by default.
 - `VLLM_HPU_LOG_STEP_CPU_FALLBACKS`: if `true` - logs CPU fallbacks for each vLLM engine step, but only if any fallback occurs. Disabled by default.
-- `VLLM_HPU_LOG_STEP_CPU_FALLBACKS_ALL`: if `true` - logs CPU fallbacks for each vLLM engine step, even if no fallback occurs. Disabled by default.
+- `VLLM_HPU_LOG_STEP_CPU_FALLBACKS_ALL`: if `true` - logs CPU fallbacks for each vLLM engine step, even if no fallback occur. Disabled by default.
 - `VLLM_T_COMPILE_FULLGRAPH`: if `true` - PyTorch compile function raises an error if any graph breaks happen during compilation. This allows for the easy detection of existing graph breaks, which usually reduce performance. Disabled by default.
+- `VLLM_T_COMPILE_DYNAMIC_SHAPES`: if `true` - PyTorch compiles graph with dynamic options set to None. It causes using dynamic shapes when needed.
+- `VLLM_FULL_WARMUP`: if `true` - PyTorch assumes that warmup fully cover all possible tensor sizes and no compilation will occur afterwards. If compilation occurs after warmup, PyTorch will crash (with message like this: `Recompilation triggered with skip_guard_eval_unsafe stance. This usually means that you have not warmed up your model with enough inputs such that you can guarantee no more recompilations.`). If this happens, disable it. `false` by default.
 
 **Performance Tuning Knobs:**
 
@@ -378,7 +388,7 @@ INFO 08-02 17:38:43 hpu_executor.py:91] init_cache_engine took 37.92 GiB of devi
 - `VLLM_GRAPH_PROMPT_RATIO`: percentage of reserved graph memory dedicated to prompt graphs. The default is `0.3`.
 - `VLLM_GRAPH_PROMPT_STRATEGY`: strategy determining order of prompt graph capture, `min_tokens` or `max_bs`. The default is `min_tokens`.
 - `VLLM_GRAPH_DECODE_STRATEGY`: strategy determining order of decode graph capture, `min_tokens` or `max_bs`. The default is `max_bs`.
-- `VLLM_EXPONENTIAL_BUCKETING`: if `true`, enables exponential bucket spacing instead of linear (experimental).
+- `VLLM_EXPONENTIAL_BUCKETING`: if `true`, enables exponential bucket spacing instead of linear. The default is `false`.
 - `VLLM_{phase}_{dim}_BUCKET_{param}`: collection of 12 environment variables configuring ranges of bucketing mechanism (linear bucketing only).
   - `{phase}` is either `PROMPT` or `DECODE`
   - `{dim}` is either `BS`, `SEQ` or `BLOCK`
@@ -432,7 +442,7 @@ Additionally, there are HPU PyTorch Bridge environment variables impacting vLLM 
 # Quantization, FP8 Inference and Model Calibration Process
 
 > [!NOTE]
-> Measurement files are required to run quantized models with vLLM on Gaudi accelerators. The FP8 model calibration procedure is described in detail in [docs.habana.ai vLLM Inference Section](https://docs.habana.ai/en/v1.21.0/PyTorch/Inference_on_PyTorch/vLLM_Inference/vLLM_FP8_Inference.html).
+> Measurement files are required to run quantized models with vLLM on Gaudi accelerators. The FP8 model calibration procedure is described in detail in [docs.habana.ai vLLM Inference Section](https://docs.habana.ai/en/v1.21.3/PyTorch/Inference_on_PyTorch/vLLM_Inference/vLLM_FP8_Inference.html).
 An end-to-end example tutorial for quantizing a BF16 Llama 3.1 model to FP8 and then inferencing is provided in this [Gaudi-tutorials repository](https://github.com/HabanaAI/Gaudi-tutorials/blob/main/PyTorch/vLLM_Tutorials/FP8_Quantization_using_INC/FP8_Quantization_using_INC.ipynb).
 
 Once you have completed the model calibration process and collected the measurements, you can run FP8 inference with vLLM using the following command:
