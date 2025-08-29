@@ -1,0 +1,120 @@
+## Global Args #################################################################
+ARG BASE_IMAGE=vault.habana.ai/gaudi-docker/1.21.3/rhel9.4/habanalabs/pytorch-installer-2.6.0:latest
+ARG VLLM_VERSION="v0.8.5"
+ARG VLLM_TGIS_ADAPTER_VERSION="0.7.1"
+ARG max_jobs=6
+ARG nvcc_threads=2
+
+## Base Layer ##################################################################
+FROM ${BASE_IMAGE} as habana-base
+
+USER root
+
+WORKDIR /workspace
+
+ENV PIP_NO_CACHE_DIR=0
+
+## Python Habana base #################################################################
+FROM habana-base as python-habana-base
+
+COPY requirements/common.txt requirements/common.txt
+COPY requirements/hpu.txt requirements/hpu.txt
+
+# install Habana Software and common dependencies
+RUN --mount=type=cache,target=/root/.cache/pip \
+    pip install \
+    -r requirements/hpu.txt
+
+## Builder #####################################################################
+FROM python-habana-base AS build
+
+# install build dependencies
+
+# copy input files
+COPY csrc csrc
+COPY setup.py setup.py
+COPY cmake cmake
+COPY CMakeLists.txt CMakeLists.txt
+COPY requirements/common.txt requirements/common.txt
+COPY requirements/hpu.txt requirements/hpu.txt
+COPY pyproject.toml pyproject.toml
+COPY vllm vllm
+
+# max jobs used by Ninja to build extensions
+ARG max_jobs
+ENV MAX_JOBS=${max_jobs}
+# number of threads used by nvcc
+ARG nvcc_threads
+ENV NVCC_THREADS=$nvcc_threads
+
+ARG VLLM_VERSION
+# # make sure punica kernels are built (for LoRA)
+# HPU currently doesn't support LoRA
+# ENV VLLM_INSTALL_PUNICA_KERNELS=1
+
+ENV CCACHE_DIR=/root/.cache/ccache
+RUN --mount=type=cache,target=/root/.cache/ccache \
+    --mount=type=cache,target=/root/.cache/pip \
+    --mount=type=bind,src=.git,target=/workspace/.git \
+    env CFLAGS="-march=haswell" \
+        PT_HPU_ENABLE_LAZY_COLLECTIVES=true \
+        VLLM_TARGET_DEVICE=hpu \
+        CXXFLAGS="$CFLAGS $CXXFLAGS" \
+        CMAKE_BUILD_TYPE=Release \
+        SETUPTOOLS_SCM_PRETEND_VERSION="${VLLM_VERSION}" \
+        python3 setup.py bdist_wheel --dist-dir=dist
+
+## Release #####################################################################
+FROM habana-base AS vllm-openai
+
+WORKDIR /workspace
+
+# Triton needs a CC compiler
+RUN dnf install -y --setopt=install_weak_deps=0 --nodocs gcc \
+    && dnf clean all
+
+# install vllm wheel first, so that torch etc will be installed
+RUN --mount=type=bind,from=build,src=/workspace/dist,target=/workspace/dist \
+    --mount=type=cache,target=/root/.cache/pip \
+    pip install $(echo dist/*.whl)'[tensorizer]' --verbose
+
+ENV HF_HUB_OFFLINE=1 \
+    HOME=/home/vllm \
+    VLLM_USAGE_SOURCE=production-docker-image \
+    VLLM_NO_USAGE_STATS=1
+
+# setup non-root user for OpenShift
+RUN umask 002 && \
+    useradd --uid 2000 --gid 0 vllm && \
+    mkdir -p /home/vllm && \
+    chown -R vllm /home/vllm && \
+    chmod g+rwx /home/vllm
+
+COPY LICENSE /licenses/vllm.md
+COPY examples/*.jinja /app/data/template/
+
+USER 2000
+WORKDIR /home/vllm
+
+ENTRYPOINT ["python3", "-m", "vllm.entrypoints.openai.api_server"]
+
+## vllm-grpc-adapter #####################################################################
+FROM vllm-openai as vllm-grpc-adapter
+
+USER root
+
+ARG VLLM_TGIS_ADAPTER_VERSION
+RUN --mount=type=cache,target=/root/.cache/pip \
+    --mount=type=bind,from=build,src=/workspace/dist,target=/workspace/dist \
+    pip install vllm-tgis-adapter==${VLLM_TGIS_ADAPTER_VERSION} --no-deps
+
+ENV GRPC_PORT=8033 \
+    PORT=8000 \
+    # As an optimization, vLLM disables logprobs when using spec decoding by
+    # default, but this would be unexpected to users of a hosted model that
+    # happens to have spec decoding
+    # see: https://github.com/vllm-project/vllm/pull/6485
+    DISABLE_LOGPROBS_DURING_SPEC_DECODING=false
+
+USER 2000
+ENTRYPOINT ["python3", "-m", "vllm_tgis_adapter", "--uvicorn-log-level=warning"]
