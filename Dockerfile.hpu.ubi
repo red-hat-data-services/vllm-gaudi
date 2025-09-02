@@ -106,6 +106,14 @@ USER root
 ARG VLLM_TGIS_ADAPTER_VERSION
 RUN --mount=type=cache,target=/root/.cache/pip \
     --mount=type=bind,from=build,src=/workspace/dist,target=/workspace/dist \
+    pip install \
+          prometheus_client==0.21.1 \
+          grpcio==1.70.0 \
+          grpcio-health-checking==1.70.0 \
+          grpcio-reflection==1.70.0 \
+          accelerate==1.7.0 \
+          hf-transfer==0.1.9 \
+          cachetools~=5.5 && \
     pip install vllm-tgis-adapter==${VLLM_TGIS_ADAPTER_VERSION} --no-deps
 
 ENV GRPC_PORT=8033 \
