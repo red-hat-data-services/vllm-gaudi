@@ -667,7 +667,7 @@ vocos==0.1.0
     # via -r requirements-test.in
 word2number==1.1
     # via lm-eval
-xxhash==3.5.0
+xxhash==3.6.0
     # via
     #   datasets
     #   evaluate
