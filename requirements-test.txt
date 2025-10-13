@@ -459,7 +459,7 @@ ray[adag]==2.40.0
     # via -r requirements-test.in
 redis==5.2.0
     # via tensorizer
-referencing==0.35.1
+referencing==0.37.0
     # via
     #   jsonschema
     #   jsonschema-specifications
