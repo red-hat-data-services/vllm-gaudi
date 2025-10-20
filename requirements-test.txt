@@ -348,7 +348,7 @@ pathspec==0.12.1
     # via black
 pathvalidate==3.2.1
     # via pytablewriter
-patsy==1.0.1
+patsy==1.0.2
     # via statsmodels
 peft==0.13.2
     # via
