@@ -115,7 +115,7 @@ exceptiongroup==1.2.2
     # via
     #   anyio
     #   pytest
-fastrlock==0.8.2
+fastrlock==0.8.3
     # via cupy-cuda12x
 filelock==3.16.1
     # via
