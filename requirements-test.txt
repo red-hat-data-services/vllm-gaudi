@@ -454,7 +454,7 @@ rpds-py==0.20.1
     #   referencing
 rsa==4.7.2
     # via awscli
-s3transfer==0.10.3
+s3transfer==0.16.0
     # via
     #   awscli
     #   boto3
