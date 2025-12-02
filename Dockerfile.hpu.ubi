@@ -61,8 +61,6 @@ RUN echo "[CRB]" > /etc/yum.repos.d/CentOS-Linux-CRB.repo && \
 
 RUN dnf install -y --setopt=install_weak_deps=False \
         bzip2 \
-        bzip2-devel \
-        clang \
         cmake3 \
         cpp \
         ffmpeg-free \
@@ -73,12 +71,9 @@ RUN dnf install -y --setopt=install_weak_deps=False \
         glibc-devel \
         glibc-headers \
         iproute \
-        jemalloc \
         libarchive \
-        libffi-devel \
         libjpeg-devel \
         libksba \
-        llvm \
         lsb_release \
         lsof \
         mesa-libGL \
@@ -194,16 +189,11 @@ LABEL description="Image with pre installed Habanalabs packages for PyTorch"
 RUN echo "/usr/lib/habanalabs" > $(python3 -c "import sysconfig; print(sysconfig.get_path('platlib'))")/habanalabs-graph.pth
 
 RUN dnf install --nobest --nodocs --setopt=install_weak_deps=false --allowerasing -y \
-        cairo-devel \
         gperftools-devel \
-        iproute \
         jq \
-        lapack-devel \
         numactl \
         numactl-devel \
-        openblas-devel \
-        which \
-        zlib-devel && \
+        which && \
     dnf clean all
 
 COPY --from=clone_repo /src/sai/dockerfiles/pytorch/install_packages.sh ./install_packages.sh
