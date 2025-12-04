@@ -345,4 +345,3 @@ LABEL name="rhoai/odh-vllm-gaudi-rhel9" \
       summary="GPU-accelerated vLLM build using Intel Gaudi (Habana) for high-performance inference." \
       com.redhat.license_terms="https://www.redhat.com/licenses/Red_Hat_Standard_EULA_20191108.pdf" \
       vendor="Red Hat, Inc."
-
