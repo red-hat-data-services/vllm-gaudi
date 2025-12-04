@@ -1,21 +1,17 @@
 approvers:
   - danielezonca
-  - terrytangyuan
-  - dtrifiro
-  - NickLucche
-  - heyselbi
   - RH-steve-grubb
   - rpancham
-  - vaibhavjainwiz
-  - Xaenalt
-  - tarukumar
   - Raghul-M
+  - Jooho
+  - brettmthompson
+  - edwardquarmi
+  - Snomaan6846
 reviewers:
-  - dtrifiro
-  - NickLucche
-  - heyselbi
   - RH-steve-grubb
   - rpancham
-  - vaibhavjainwiz
-  - Xaenalt
-  - tarukumar
+  - Raghul-M
+  - Jooho
+  - brettmthompson
+  - edwardquarmi
+  - Snomaan6846
