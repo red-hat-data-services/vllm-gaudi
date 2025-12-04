@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 
-import re
+import regex as re
 
 
 def has_xgrammar_unsupported_json_features(schema: dict) -> bool:
@@ -15,15 +16,13 @@ def has_xgrammar_unsupported_json_features(schema: dict) -> bool:
             return True
 
         # Check for array unsupported keywords
-        if obj.get("type") == "array" and any(key in obj for key in [
-                "uniqueItems", "contains", "minContains", "maxContains",
-                "minItems", "maxItems"
-        ]):
+        if obj.get("type") == "array" and any(
+                key in obj for key in
+            ["uniqueItems", "contains", "minContains", "maxContains"]):
             return True
 
         # Unsupported keywords for strings
-        if obj.get("type") == "string" and any(
-                key in obj for key in ["minLength", "maxLength", "format"]):
+        if obj.get("type") == "string" and "format" in obj:
             return True
 
         # Unsupported keywords for objects
