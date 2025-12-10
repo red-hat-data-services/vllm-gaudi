@@ -506,7 +506,7 @@ safetensors==0.4.5
     #   peft
     #   timm
     #   transformers
-scikit-learn==1.5.2
+scikit-learn==1.8.0
     # via
     #   librosa
     #   lm-eval
