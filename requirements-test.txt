@@ -120,7 +120,7 @@ encodec==0.1.1
     # via vocos
 evaluate==0.4.3
     # via lm-eval
-fastparquet==2024.11.0
+fastparquet==2025.12.0
     # via genai-perf
 fastrlock==0.8.2
     # via cupy-cuda12x
