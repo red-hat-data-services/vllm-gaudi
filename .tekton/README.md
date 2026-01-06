@@ -16,6 +16,8 @@ cd konflux-central
 ```
 
 - Check out the release branch
+
+```bash
 git checkout rhoai-2.25
 ```
 
