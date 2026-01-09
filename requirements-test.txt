@@ -332,7 +332,7 @@ pathspec==0.12.1
     # via black
 pathvalidate==3.2.1
     # via pytablewriter
-peft==0.13.2
+peft==0.18.1
     # via
     #   -r requirements-test.in
     #   lm-eval
