@@ -4,19 +4,14 @@ import os
 
 class ScriptGenerator:
 
-    def __init__(self,
-                 template_script_path,
-                 output_script_path,
-                 variables,
-                 log_dir="logs"):
+    def __init__(self, template_script_path, output_script_path, variables, log_dir="logs", varlist_conf_path=None):
         self.template_script_path = template_script_path
+        self.varlist_conf_path = varlist_conf_path
         self.output_script_path = output_script_path
         self.variables = variables
         self.log_dir = log_dir
-        self.log_file = os.path.join(
-            self.log_dir,
-            f"{os.path.splitext(os.path.basename(self.output_script_path))[0]}.log"
-        )
+        self.log_file = os.path.join(self.log_dir,
+                                     f"{os.path.splitext(os.path.basename(self.output_script_path))[0]}.log")
 
     def generate_script(self, vars_dict):
         """
@@ -25,8 +20,16 @@ class ScriptGenerator:
         """
         with open(self.template_script_path) as f:
             template = f.read()
-        export_lines = "\n".join(
-            [f"export {k}={v}" for k, v in vars_dict.items()])
+        # Create our output list
+        if self.varlist_conf_path:
+            output_dict = {}
+            with open(self.varlist_conf_path) as var_file:
+                for line in var_file:
+                    param = line.strip()
+                    output_dict[param] = vars_dict[param]
+            export_lines = "\n".join([f"export {k}={v}" for k, v in output_dict.items()])
+        else:
+            export_lines = "\n".join([f"export {k}={v}" for k, v in vars_dict.items()])
         script_content = template.replace("#@VARS", export_lines)
         with open(self.output_script_path, 'w') as f:
             f.write(script_content)
