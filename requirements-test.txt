@@ -520,7 +520,7 @@ tokenizers==0.20.3
     # via transformers
 toml==0.10.2
     # via datamodel-code-generator
-tomli==2.0.2
+tomli==2.4.0
     # via
     #   black
     #   pytest
