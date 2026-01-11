@@ -471,7 +471,7 @@ scikit-learn==1.5.2
     #   librosa
     #   lm-eval
     #   sentence-transformers
-scipy==1.13.1
+scipy==1.17.0
     # via
     #   librosa
     #   scikit-learn
