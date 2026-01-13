@@ -169,7 +169,7 @@ RUN set -e && \
     git remote add upstream https://github.com/vllm-project/vllm.git && \
     git fetch upstream --tags && \
     git checkout ${VLLM_PROJECT_COMMIT} && \
-    python use_existing_torch.py && \
+    pip install -r <(sed '/^torch/d' requirements/build.txt) && \
     VLLM_TARGET_DEVICE=empty pip install --no-build-isolation . && \
     cd $VLLM_PATH2 && \
     git checkout ${VLLM_GAUDI_COMMIT} && \
@@ -201,30 +201,28 @@ USER 2000
 ENTRYPOINT ["python3", "-m", "vllm.entrypoints.openai.api_server"]
 
 ######## vllm-grpc-adapter ####################################################
-FROM vllm-openai as vllm-grpc-adapter
+#FROM vllm-openai as vllm-grpc-adapter
 
-USER root
+#USER root
 
-ARG VLLM_TGIS_ADAPTER_VERSION="0.7.1"
-RUN pip install \
-          prometheus_client==0.21.1 \
-          grpcio==1.70.0 \
-          grpcio-health-checking==1.70.0 \
-          grpcio-reflection==1.70.0 \
-          accelerate==1.7.0 \
-          hf-transfer==0.1.9 \
-          cachetools~=5.5 && \
-    pip install vllm-tgis-adapter==${VLLM_TGIS_ADAPTER_VERSION} --no-deps
+#ARG VLLM_TGIS_ADAPTER_VERSION="0.7.1"
+#RUN pip install \
+#          prometheus_client==0.21.1 \
+#          grpcio==1.70.0 \
+#          grpcio-health-checking==1.70.0 \
+#          grpcio-reflection==1.70.0 \
+#          accelerate==1.7.0 \
+#          hf-transfer==0.1.9 \
+#          cachetools~=5.5 && \
+#    pip install vllm-tgis-adapter==${VLLM_TGIS_ADAPTER_VERSION} --no-deps
 
-ENV GRPC_PORT=8033 \
-    PORT=8000 \
+#ENV GRPC_PORT=8033 \
+#    PORT=8000 \
     # As an optimization, vLLM disables logprobs when using spec decoding by
     # default, but this would be unexpected to users of a hosted model that
     # happens to have spec decoding
     # see: https://github.com/vllm-project/vllm/pull/6485
-    DISABLE_LOGPROBS_DURING_SPEC_DECODING=false
+#    DISABLE_LOGPROBS_DURING_SPEC_DECODING=false
 
 #USER 2000
-# Note: staying root because entrypoint starts sshd and then changes to vllm
-ENTRYPOINT ["/usr/bin/tgis-entrypoint.sh"]
-
+#ENTRYPOINT ["python3", "-m", "vllm_tgis_adapter", "--uvicorn-log-level=warning"]
