@@ -1,50 +1,46 @@
-# Welcome to vLLM
+---
+title: Overview
+---
 
-<figure markdown="span">
-  ![](./assets/logos/vllm-logo-text-light.png){ align="center" alt="vLLM" class="no-scaled-link" width="60%" }
+<figure markdown="span" style="display: flex; justify-content: center; align-items: center; gap: 10px; margin: auto;">
+  <img src="./assets/logos/vllm-logo-text-light.png" alt="vLLM" style="width: 30%; margin: 0;"> x
+  <img src="./assets/logos/gaudi-logo.png" alt="Intel-Gaudi" style="width: 30%; margin: 0;">
 </figure>
 
 <p style="text-align:center">
-<strong>Easy, fast, and cheap LLM serving for everyone
-</strong>
 </p>
 
 <p style="text-align:center">
 <script async defer src="https://buttons.github.io/buttons.js"></script>
-<a class="github-button" href="https://github.com/vllm-project/vllm" data-show-count="true" data-size="large" aria-label="Star">Star</a>
-<a class="github-button" href="https://github.com/vllm-project/vllm/subscription" data-show-count="true" data-icon="octicon-eye" data-size="large" aria-label="Watch">Watch</a>
-<a class="github-button" href="https://github.com/vllm-project/vllm/fork" data-show-count="true" data-icon="octicon-repo-forked" data-size="large" aria-label="Fork">Fork</a>
+<a class="github-button" href="https://github.com/vllm-project/vllm-gaudi" data-show-count="true" data-size="large" aria-label="Star">Star</a>
+<a class="github-button" href="https://github.com/vllm-project/vllm-gaudi/subscription" data-show-count="true" data-icon="octicon-eye" data-size="large" aria-label="Watch">Watch</a>
+<a class="github-button" href="https://github.com/vllm-project/vllm-gaudi/fork" data-show-count="true" data-icon="octicon-repo-forked" data-size="large" aria-label="Fork">Fork</a>
 </p>
 
-vLLM is a fast and easy-to-use library for LLM inference and serving.
+The vLLM Hardware Plugin for Intel® Gaudi® is a community-driven integration layer that enables efficient, high-performance large language model (LLM) inference on Intel® Gaudi® AI accelerators.
 
-Originally developed in the [Sky Computing Lab](https://sky.cs.berkeley.edu) at UC Berkeley, vLLM has evolved into a community-driven project with contributions from both academia and industry.
+The vLLM Hardware Plugin for Intel® Gaudi® connects the [vLLM serving engine](https://docs.vllm.ai/) with [Intel® Gaudi®](https://docs.habana.ai/) hardware, offering optimized inference capabilities for enterprise-scale LLM workloads. It is developed and maintained by the Intel® Gaudi® team and follows the [hardware pluggable RFC](https://github.com/vllm-project/vllm/issues/11162) and [vLLM plugin architecture RFC](https://github.com/vllm-project/vllm/issues/19161) for modular integration.
 
-vLLM is fast with:
+## Advantages
 
-- State-of-the-art serving throughput
-- Efficient management of attention key and value memory with [**PagedAttention**](https://blog.vllm.ai/2023/06/20/vllm.html)
-- Continuous batching of incoming requests
-- Fast model execution with CUDA/HIP graph
-- Quantization: [GPTQ](https://arxiv.org/abs/2210.17323), [AWQ](https://arxiv.org/abs/2306.00978), INT4, INT8, and FP8
-- Optimized CUDA kernels, including integration with FlashAttention and FlashInfer.
-- Speculative decoding
-- Chunked prefill
+The vLLM Hardware Plugin for Intel® Gaudi® offers the following key benefits:
 
-vLLM is flexible and easy to use with:
+- **Optimization for Intel® Gaudi®**: Supports advanced features, such as the bucketing mechanism, Floating Point 8-bit (FP8) quantization, and custom graph caching for fast warm-up and efficient memory use.
+- **Scalability and efficiency**: Designed to maximize throughput and minimize latency for large-scale deployments, making it ideal for production-grade LLM inference.
+- **Community support**: Actively maintained on [GitHub](https://github.com/vllm-project/vllm-gaudi) by contributions from the Intel® Gaudi® team and the broader vLLM ecosystem.
 
-- Seamless integration with popular HuggingFace models
-- High-throughput serving with various decoding algorithms, including *parallel sampling*, *beam search*, and more
-- Tensor parallelism and pipeline parallelism support for distributed inference
-- Streaming outputs
-- OpenAI-compatible API server
-- Support NVIDIA GPUs, AMD CPUs and GPUs, Intel CPUs, Gaudi® accelerators and GPUs, IBM Power CPUs, TPU, and AWS Trainium and Inferentia Accelerators.
-- Prefix caching support
-- Multi-lora support
+## Getting Started
 
-For more information, check out the following:
+To get started with vLLM Hardware Plugin for Intel® Gaudi®:
 
-- [vLLM announcing blog post](https://vllm.ai) (intro to PagedAttention)
-- [vLLM paper](https://arxiv.org/abs/2309.06180) (SOSP 2023)
-- [How continuous batching enables 23x throughput in LLM inference while reducing p50 latency](https://www.anyscale.com/blog/continuous-batching-llm-inference) by Cade Daniel et al.
-- [vLLM Meetups][meetups]
+- [ ] Set up your environment using the [quickstart](getting_started/quickstart/quickstart.md) guide and use the plugin locally or in your containerized environment.
+- [ ] Run inference using supported models, such as Llama 3.1, Mixtral, or DeepSeek.
+- [ ] Explore advanced features, such as FP8 quantization, recipe caching, and expert parallelism.
+- [ ] Join the community by contributing to the [vLLM-Gaudi](https://github.com/vllm-project/vllm-gaudi) GitHub repository.
+
+## Reference
+
+For more information, see:
+
+- [Intel® Gaudi® Documentation](https://docs.habana.ai/en/latest/index.html)  
+- [vLLM Plugin System Overview](https://docs.vllm.ai/en/latest/design/plugin_system.html)

@@ -1,341 +1,231 @@
-# Copyright (c) 2025 Habana Labs, Ltd.
-#
+# Copyright (C) 2025 Habana Labs, Ltd. an Intel Company
 # SPDX-License-Identifier: Apache-2.0
-#
-######### cloned repo layer ########
-ARG BASE_IMAGE
-FROM ${BASE_IMAGE} as clone_repo
-ARG REPO=https://github.com/HabanaAI/Setup_and_Install.git
-ARG VERSION
 
-# Minimal deps to clone over HTTPS
-RUN dnf -y install git ca-certificates && update-ca-trust && dnf clean all
-WORKDIR /src/sai
+# Global build arguments - declared before first FROM to be available in all stages
+ARG ARTIFACTORY_URL="vault.habana.ai"
+ARG SYNAPSE_VERSION=1.23.0
+ARG SYNAPSE_REVISION=32 # Update the Synapse revision corresponding to Habana drivers
+ARG BASE_NAME=rhel9.6
+ARG PT_VERSION=2.9.0
+# can be upstream or fork
+ARG TORCH_TYPE=upstream
+ARG VLLM_GAUDI_COMMIT=v0.13.0
+ARG VLLM_PROJECT_COMMIT=v0.13.0
 
-# This is to get the install script needed by the pytorch layer
-RUN git clone --branch r"${VERSION}" --single-branch --depth 1 "${REPO}" .
+# ============================================================================
+# Stage 1: gaudi-base - Base system setup with Habana drivers
+# ============================================================================
+FROM registry.access.redhat.com/ubi9/ubi:9.6 AS gaudi-base
 
-# Done
-
-######### base layer ########
-ARG BASE_IMAGE
-FROM ${BASE_IMAGE} as base
+# Re-declare global ARGs to use them in this stage
 ARG ARTIFACTORY_URL
-ARG VERSION
-ARG REVISION
+ARG SYNAPSE_VERSION
+ARG SYNAPSE_REVISION
+ARG BASE_NAME
+ARG PT_VERSION
+ARG TORCH_TYPE
 
-# for RHEL certification
-LABEL vendor="Habanalabs Ltd."
-LABEL release="${VERSION}-${REVISION}"
+# Labels for RHEL certification
+LABEL vendor="Habanalabs Ltd." \
+    release="${SYNAPSE_VERSION}-${SYNAPSE_REVISION}"
 
-COPY --from=clone_repo /src/sai/dockerfiles/base/LICENSE /licenses/
+# Environment variables - Habana-specific paths and configurations
+ENV TORCH_TYPE=${TORCH_TYPE} \
+    PT_VERSION=${PT_VERSION} \
+    OS_STRING="rhel96" \
+    VLLM_TARGET_DEVICE="hpu" \
+    GC_KERNEL_PATH=/usr/lib/habanalabs/libtpc_kernels.so \
+    HABANA_LOGS=/var/log/habana_logs/ \
+    HABANA_SCAL_BIN_PATH=/opt/habanalabs/engines_fw \
+    HABANA_PLUGINS_LIB_PATH=/opt/habanalabs/habana_plugins
 
-RUN dnf -y update && dnf install -y \
-        python3-dnf-plugin-versionlock && \
+# Copy license
+COPY LICENSE /licenses/
+
+# System setup - Remove FIPS provider and add EPEL
+RUN dnf -y update && \
+    dnf install -y python3-dnf-plugin-versionlock && \
     dnf versionlock add redhat-release* && \
+    rpm -e --nodeps openssl-fips-provider-so && \
     dnf clean all
 
-# This is to prevent a conflict between a 9.5 & 9.6 version
-RUN rpm -e --nodeps openssl-fips-provider-so
-
-RUN dnf install -y https://dl.fedoraproject.org/pub/epel/epel-release-latest-9.noarch.rpm && \
+# Install system dependencies
+RUN dnf install -y \
+    wget git jq \
+    # Image processing dependencies (needed for pillow-simd -> habana-media-loader)
+    zlib-devel libjpeg-turbo-devel \
+    # Python development
+    python3-devel python3.12 python3.12-devel python3.12-pip \
+    # NUMA support - numactl-devel centos appstream
+    numactl-libs && \
     dnf clean all
 
-RUN echo "[BaseOS]" > /etc/yum.repos.d/CentOS-Linux-BaseOS.repo && \
-    echo "name=CentOS Linux 9 - BaseOS" >> /etc/yum.repos.d/CentOS-Linux-BaseOS.repo && \
-    echo "baseurl=https://mirror.stream.centos.org/9-stream/BaseOS/x86_64/os" >> /etc/yum.repos.d/CentOS-Linux-BaseOS.repo && \
-    echo "gpgkey=https://www.centos.org/keys/RPM-GPG-KEY-CentOS-Official-SHA256" >> /etc/yum.repos.d/CentOS-Linux-BaseOS.repo && \
-    echo "gpgcheck=1" >> /etc/yum.repos.d/CentOS-Linux-BaseOS.repo
+RUN  printf "[centos9]\\nname=CentOS Linux 9 - AppStream\\nbaseurl=https://mirror.stream.centos.org/9-stream/AppStream/x86_64/os\\ngpgkey=https://www.centos.org/keys/RPM-GPG-KEY-CentOS-Official-SHA256\\ngpgcheck=1\\n" > /etc/yum.repos.d/CentOS-Linux-AppStream.repo && dnf install -y numactl-devel && dnf clean all
 
-RUN echo "[centos9]" > /etc/yum.repos.d/CentOS-Linux-AppStream.repo && \
-    echo "name=CentOS Linux 9 - AppStream" >> /etc/yum.repos.d/CentOS-Linux-AppStream.repo && \
-    echo "baseurl=https://mirror.stream.centos.org/9-stream/AppStream/x86_64/os" >> /etc/yum.repos.d/CentOS-Linux-AppStream.repo && \
-    echo "gpgkey=https://www.centos.org/keys/RPM-GPG-KEY-CentOS-Official-SHA256" >> /etc/yum.repos.d/CentOS-Linux-AppStream.repo && \
-    echo "gpgcheck=1" >> /etc/yum.repos.d/CentOS-Linux-AppStream.repo
-
-RUN echo "[CRB]" > /etc/yum.repos.d/CentOS-Linux-CRB.repo && \
-    echo "name=CentOS Linux 9 - CRB" >> /etc/yum.repos.d/CentOS-Linux-CRB.repo && \
-    echo "baseurl=https://mirror.stream.centos.org/9-stream/CRB/x86_64/os" >> /etc/yum.repos.d/CentOS-Linux-CRB.repo && \
-    echo "gpgkey=https://www.centos.org/keys/RPM-GPG-KEY-CentOS-Official-SHA256" >> /etc/yum.repos.d/CentOS-Linux-CRB.repo && \
-    echo "gpgcheck=1" >> /etc/yum.repos.d/CentOS-Linux-CRB.repo
-
-RUN dnf install -y --setopt=install_weak_deps=False \
-        bzip2 \
-        bzip2-devel \
-        clang \
-        cmake3 \
-        cpp \
-        ffmpeg-free \
-        gcc \
-        gcc-c++ \
-        git \
-        glibc \
-        glibc-devel \
-        glibc-headers \
-        iproute \
-        jemalloc \
-        libarchive \
-        libffi-devel \
-        libjpeg-devel \
-        libksba \
-        llvm \
-        lsb_release \
-        lsof \
-        mesa-libGL \
-        openssh-clients \
-        openssh-server \
-        openssl \
-        openssl-devel \
-        perl-Net-SSLeay \
-        python3-devel \
-        python3.12 \
-        python3.12-devel \
-        python3.12-pip \
-        unzip \
-        wget \
-        zlib-devel \
-    ibacm \
-    infiniband-diags \
-    libibumad \
-    libibverbs \
-    libibverbs-utils \
-    librdmacm \
-    librdmacm-utils \
-    python3-pyverbs \
-    rdma-core \
-    rdma-core-devel && \
-    dnf clean all && \
-    rm -f /etc/ssh/ssh_host_*_key* && \
-    ln -s /usr/bin/pip3.12 /usr/bin/pip
-
+# Configure Python 3.12 as default
 RUN alternatives --install /usr/bin/python3 python3 /usr/bin/python3.12 2 && \
     alternatives --install /usr/bin/python3 python3 /usr/bin/python3.9 1 && \
-    alternatives --set python3 /usr/bin/python3.12
+    alternatives --set python3 /usr/bin/python3.12 && \
+    ln -s /usr/bin/python3 /usr/bin/python
 
-ENV PIP_DISABLE_PIP_VERSION_CHECK=1
-ENV PIP_NO_CACHE_DIR=on
+# Install base Python packages
+RUN pip install setuptools==79.0.1 wheel setuptools_scm && \
+    pip install --upgrade Jinja2 protobuf urllib3 requests
 
-RUN python3 -m pip install setuptools==79.0.1 wheel && \
-    python3 -m pip install --upgrade Jinja2 protobuf urllib3 requests
-
-ENV OPENMPI_VERSION=4.1.6
-ENV OPENMPI_SHA256="44da277b8cdc234e71c62473305a09d63f4dcca292ca40335aab7c4bf0e6a566"
-ENV MPI_ROOT=/opt/habanalabs/openmpi
-ENV LD_LIBRARY_PATH=${MPI_ROOT}/lib:/usr/lib/habanalabs:$LD_LIBRARY_PATH
-ENV PATH=${MPI_ROOT}/bin:$PATH
-ENV OPAL_PREFIX=${MPI_ROOT}
-ENV MPICC=${MPI_ROOT}/bin/mpicc
-ENV RDMAV_FORK_SAFE=1
-ENV FI_EFA_USE_DEVICE_RDMA=0
-ENV OMPI_MCA_btl=^openib
-
-RUN echo "[habanalabs]" > /etc/yum.repos.d/habanalabs.repo && \
-    echo "name=Habana RH9 Linux repo" >> /etc/yum.repos.d/habanalabs.repo && \
-    echo "baseurl=https://${ARTIFACTORY_URL}/artifactory/rhel/9/9.6" >> /etc/yum.repos.d/habanalabs.repo && \
-    echo "gpgkey=https://${ARTIFACTORY_URL}/artifactory/rhel/9/9.6/repodata/repomd.xml.key" >> /etc/yum.repos.d/habanalabs.repo && \
-    echo "gpgcheck=1" >> /etc/yum.repos.d/habanalabs.repo
-
-RUN rpm --import "https://${ARTIFACTORY_URL}/artifactory/gaudi-general/keyPairs/primary/public" && dnf install -y --setopt=install_weak_deps=False \
-        habanalabs-rdma-core-"$VERSION"-"$REVISION".el9 \
-        habanalabs-thunk-"$VERSION"-"$REVISION".el9 \
-        habanalabs-firmware-tools-"$VERSION"-"$REVISION".el9 \
-        habanalabs-graph-"$VERSION"-"$REVISION".el9 && \
+# Setup Habana repository and install Habana packages
+RUN printf "[habanalabs]\\nname=Habana RH9 Linux repo\\nbaseurl=https://${ARTIFACTORY_URL}/artifactory/rhel/9/9.6\\ngpgkey=https://${ARTIFACTORY_URL}/artifactory/rhel/9/9.6/repodata/repomd.xml.key\\ngpgcheck=1\\n" > /etc/yum.repos.d/habanalabs.repo && \
+    echo "=== Content of habanalabs.repo ===" && \
+    cat /etc/yum.repos.d/habanalabs.repo && \
+    echo "=== End of habanalabs.repo ===" && \
+    _GPG_TEMP=$(mktemp -d) && \
+    wget -q -O "${_GPG_TEMP}/habana_pubkey" "https://${ARTIFACTORY_URL}/artifactory/gaudi-general/keyPairs/primary/public" && \
+    rpm --import "${_GPG_TEMP}/habana_pubkey" && \
+    rm -rf "${_GPG_TEMP}" && \
+    printf "[BaseOS]\\nname=CentOS Linux 9 - BaseOS\\nbaseurl=https://mirror.stream.centos.org/9-stream/BaseOS/x86_64/os\\ngpgkey=https://www.centos.org/keys/RPM-GPG-KEY-CentOS-Official-SHA256\\ngpgcheck=1\\n" > /etc/yum.repos.d/CentOS-Linux-BaseOS.repo && \
+    dnf makecache && \
+    dnf install -y https://dl.fedoraproject.org/pub/epel/epel-release-latest-9.noarch.rpm && \
+    dnf install -y \
+    habanalabs-rdma-core-"$SYNAPSE_VERSION"-"$SYNAPSE_REVISION"* \
+    habanalabs-thunk-"$SYNAPSE_VERSION"-"$SYNAPSE_REVISION"* \
+    habanalabs-firmware-tools-"$SYNAPSE_VERSION"-"$SYNAPSE_REVISION"* \
+    habanalabs-graph-"$SYNAPSE_VERSION"-"$SYNAPSE_REVISION"* && \
     dnf clean all && \
     chmod +t /var/log/habana_logs && \
-    rm -f /etc/yum.repos.d/habanalabs.repo
+    rm -f /etc/yum.repos.d/habanalabs.repo \
+          /etc/yum.repos.d/CentOS-Linux-BaseOS.repo \
+          /etc/yum.repos.d/CentOS-Linux-AppStream.repo
 
-ENV RDMA_CORE_ROOT=/opt/habanalabs/rdma-core/src
-ENV RDMA_CORE_LIB=${RDMA_CORE_ROOT}/build/lib
+# Install Habana media loader and configure Python path
+RUN pip install habana-media-loader=="${SYNAPSE_VERSION}"."${SYNAPSE_REVISION}" && \
+    echo "/usr/lib/habanalabs" > $(python3 -c "import sysconfig; print(sysconfig.get_path('platlib'))")/habanalabs-graph.pth
 
-RUN set -e; \
-    wget -q -O /tmp/openmpi-${OPENMPI_VERSION}.tar.gz \
-      https://download.open-mpi.org/release/open-mpi/v4.1/openmpi-${OPENMPI_VERSION}.tar.gz && \
-    SUM="$(sha256sum /tmp/openmpi-${OPENMPI_VERSION}.tar.gz | cut -d ' ' -f1)"; \
-    if [ "$SUM" != "$OPENMPI_SHA256" ]; then \
-        echo "Open MPI tarball mismatch detected (sha256=$SUM)."; \
-        exit 1; \
-    fi; \
-    tar -xzf /tmp/openmpi-${OPENMPI_VERSION}.tar.gz -C /tmp && \
-    cd /tmp/openmpi-${OPENMPI_VERSION} && \
-    ./configure --prefix=${MPI_ROOT} --with-verbs && \
-    make -j"$(nproc)" && make install && \
-    cd / && rm -rf /tmp/openmpi-${OPENMPI_VERSION}.tar.gz /tmp/openmpi-${OPENMPI_VERSION}
+# ============================================================================
+# Stage 2: gaudi-pytorch - Install PyTorch for Habana
+# ============================================================================
+FROM gaudi-base AS gaudi-pytorch
 
-RUN ln -s /usr/bin/python3 /usr/bin/python && \
-    python3 -m pip install habana_media_loader=="${VERSION}"."${REVISION}"
-
-# SSH configuration necessary to support mpi-operator v2
-# Convert ENTRYPOINTs into scripts so that sshd can be started
-RUN mkdir -p /var/run/sshd && \
-    sed -i 's/[ #]\(.*StrictHostKeyChecking \).*/ \1no/g' /etc/ssh/ssh_config && \
-    sed -i 's/#\(ForwardAgent \).*/\1yes/g' /etc/ssh/ssh_config && \
-    echo "    UserKnownHostsFile /dev/null" >> /etc/ssh/ssh_config && \
-    sed -i 's/#\(StrictModes \).*/\1no/g' /etc/ssh/sshd_config
-COPY --chmod=0755 *-entrypoint.sh /usr/bin/
-
-ENV GC_KERNEL_PATH=/usr/lib/habanalabs/libtpc_kernels.so
-ENV HABANA_LOGS=/var/log/habana_logs/
-ENV HABANA_SCAL_BIN_PATH=/opt/habanalabs/engines_fw
-ENV HABANA_PLUGINS_LIB_PATH=/opt/habanalabs/habana_plugins
-
-######## pytorch layer ########
-FROM base as pytorch
-ARG PT_VERSION
-ARG VERSION
-ARG REVISION
+# Re-declare global ARGs needed in this stage
 ARG ARTIFACTORY_URL
+ARG PT_VERSION
+ARG SYNAPSE_VERSION
+ARG SYNAPSE_REVISION
 ARG TORCH_TYPE
+
+# Environment variables inherited from base, OS_STRING needed for PyTorch install
+ENV OS_STRING="rhel96"
+
+# Use installer script from Habana to install Pytorch
+RUN PT_PACKAGE_NAME="pytorch_modules-v${PT_VERSION}_${SYNAPSE_VERSION}_${SYNAPSE_REVISION}.tgz" && \
+    PT_ARTIFACT_PATH="https://${ARTIFACTORY_URL}/artifactory/gaudi-pt-modules/${SYNAPSE_VERSION}/${SYNAPSE_REVISION}/pytorch/${OS_STRING}" && \
+    TMP_PATH=$(mktemp --directory) && \
+    wget --no-verbose "${PT_ARTIFACT_PATH}/${PT_PACKAGE_NAME}" && \
+    tar -zxf "${PT_PACKAGE_NAME}" -C "${TMP_PATH}" && \
+    cd "${TMP_PATH}" && \
+    export SKIP_INSTALL_DEPENDENCIES=1 && \
+    ./install.sh $SYNAPSE_VERSION $SYNAPSE_REVISION $TORCH_TYPE && \
+    cd / && \
+    rm -rf "${TMP_PATH}" "${PT_PACKAGE_NAME}"
+
+WORKDIR /workspace
+
+# ============================================================================
+# Stage 3: vllm-final - Install vLLM and configure runtime
+# ============================================================================
+FROM gaudi-pytorch as vllm-openai
+
+# Re-declare global ARGs needed in this stage
+ARG VLLM_GAUDI_COMMIT
+ARG VLLM_PROJECT_COMMIT
 ARG BASE_NAME
 
-LABEL name="PyTorch Installer"
-LABEL summary="Habanalabs PyTorch installer layer for RHEL9.6"
-LABEL description="Image with pre installed Habanalabs packages for PyTorch"
+# Environment variables for this stage
+ENV BASE_NAME=${BASE_NAME} \
+    OMPI_MCA_btl_vader_single_copy_mechanism=none \
+    VLLM_PATH=/workspace/vllm-project \
+    VLLM_PATH2=/workspace/vllm-gaudi
 
-RUN echo "/usr/lib/habanalabs" > $(python3 -c "import sysconfig; print(sysconfig.get_path('platlib'))")/habanalabs-graph.pth
-
-RUN dnf install --nobest --nodocs --setopt=install_weak_deps=false --allowerasing -y \
-        cairo-devel \
-        gperftools-devel \
-        iproute \
-        jq \
-        lapack-devel \
-        numactl \
-        numactl-devel \
-        openblas-devel \
-        which \
-        zlib-devel && \
+# Install additional system dependencies
+RUN dnf install -y gettext jq git --allowerasing && \
+    ln -sf /usr/bin/python3 /usr/bin/python && \
     dnf clean all
 
-COPY --from=clone_repo /src/sai/dockerfiles/pytorch/install_packages.sh ./install_packages.sh
-RUN ./install_packages.sh && rm -f install_packages.sh && /sbin/ldconfig
+WORKDIR /root
 
-# Set LD_PRELOAD after all required installations to
-# avoid warnings during docker creation
-ENV LD_PRELOAD=/usr/lib64/libtcmalloc.so.4
-ENV TCMALLOC_LARGE_ALLOC_REPORT_THRESHOLD=7516192768
+# Clone and install vLLM
+RUN set -e && \
+    mkdir -p $VLLM_PATH2 && \
+    git clone https://github.com/vllm-project/vllm-gaudi.git $VLLM_PATH2 && \
+    cd $VLLM_PATH2 && \
+    if [ -z "${VLLM_PROJECT_COMMIT}" ]; then \
+    VLLM_PROJECT_COMMIT=$(git show "origin/vllm/last-good-commit-for-vllm-gaudi:VLLM_STABLE_COMMIT" 2>/dev/null || { echo >&2 "Warning: Could not fetch last-good-commit, using main branch"; echo "main"; }) && \
+    echo "Found vLLM commit hash: ${VLLM_PROJECT_COMMIT}"; \
+    else \
+    echo "Using vLLM commit: ${VLLM_PROJECT_COMMIT}"; \
+    fi && \
+    mkdir -p $VLLM_PATH && \
+    echo "Clone vllm-project/vllm and use configured or last good commit hash" && \
+    git clone https://github.com/vllm-project/vllm.git $VLLM_PATH && \
+    cd $VLLM_PATH && \
+    git remote add upstream https://github.com/vllm-project/vllm.git && \
+    git fetch upstream --tags && \
+    git checkout ${VLLM_PROJECT_COMMIT} && \
+    pip install -r <(sed '/^torch/d' requirements/build.txt) && \
+    VLLM_TARGET_DEVICE=empty pip install --no-build-isolation . && \
+    cd $VLLM_PATH2 && \
+    git checkout ${VLLM_GAUDI_COMMIT} && \
+    VLLM_TARGET_DEVICE=hpu pip install -v . --no-build-isolation
 
-######## vllm Layer ########
+# The scripts below are used for benchmarks testing and autocalc:
+# RUN pip3 install -v -e $VLLM_PATH/tests/vllm_test_utils
+##Install additional Python packages
+#RUN pip3 install datasets pandas
+#
+## Copy utility scripts and configuration
+#RUN mkdir -p /root/scripts/
+#COPY templates /root/scripts/templates/
+#COPY entrypoints /root/scripts/entrypoints/
+#COPY server /root/scripts/server/
+#COPY benchmark /root/scripts/benchmark/
+#WORKDIR /root/scripts
 
-######## Base Layer ###########################################################
-FROM pytorch as habana-base
-
-USER root
-
-WORKDIR /workspace
-
-ENV PIP_NO_CACHE_DIR=0
-
-######## Python Habana base ###################################################
-FROM habana-base as python-habana-base
-
-COPY requirements/common.txt requirements/common.txt
-COPY requirements/hpu.txt requirements/hpu.txt
-
-# install Habana Software and common dependencies
-RUN --mount=type=cache,target=/root/.cache/pip \
-    pip install \
-    -r requirements/hpu.txt
-
-######## Builder ##############################################################
-FROM python-habana-base AS build
-
-# install build dependencies
-
-# copy input files
-COPY csrc csrc
-COPY setup.py setup.py
-COPY cmake cmake
-COPY CMakeLists.txt CMakeLists.txt
-COPY requirements/common.txt requirements/common.txt
-COPY requirements/hpu.txt requirements/hpu.txt
-COPY pyproject.toml pyproject.toml
-COPY vllm vllm
-
-# max jobs used by Ninja to build extensions
-ARG max_jobs=6
-ENV MAX_JOBS=${max_jobs}
-
-ARG VLLM_VERSION="v0.8.5"
-# # make sure punica kernels are built (for LoRA)
-# HPU currently doesn't support LoRA
-# ENV VLLM_INSTALL_PUNICA_KERNELS=1
-
-ENV CCACHE_DIR=/root/.cache/ccache
-RUN --mount=type=cache,target=/root/.cache/ccache \
-    --mount=type=cache,target=/root/.cache/pip \
-    --mount=type=bind,src=.git,target=/workspace/.git \
-    env CFLAGS="-march=haswell" \
-        PT_HPU_ENABLE_LAZY_COLLECTIVES=true \
-        VLLM_TARGET_DEVICE=hpu \
-        CXXFLAGS="$CFLAGS $CXXFLAGS" \
-        CMAKE_BUILD_TYPE=Release \
-        SETUPTOOLS_SCM_PRETEND_VERSION="${VLLM_VERSION}" \
-        python3 setup.py bdist_wheel --dist-dir=dist
-
-######### Release #############################################################
-FROM habana-base AS vllm-openai
-
-WORKDIR /workspace
-
-# Triton needs a CC compiler
-RUN dnf install -y --setopt=install_weak_deps=0 --nodocs gcc \
-    && dnf clean all
-
-# install vllm wheel first, so that torch etc will be installed
-RUN --mount=type=bind,from=build,src=/workspace/dist,target=/workspace/dist \
-    --mount=type=cache,target=/root/.cache/pip \
-    pip install $(echo dist/*.whl)'[tensorizer]' --verbose
-
-ENV HF_HUB_OFFLINE=1 \
-    HOME=/home/vllm \
-    VLLM_USAGE_SOURCE=production-docker-image \
-    VLLM_NO_USAGE_STATS=1
-
-# setup non-root user for OpenShift
+# Setup non-root user for OpenShift compatibility
 RUN umask 002 && \
     useradd --uid 2000 --gid 0 vllm && \
-    mkdir -p /home/vllm && \
-    chown -R vllm /home/vllm && \
-    chmod g+rwx /home/vllm
+    chmod g+rwx /home/vllm /usr/src /workspace && \
+    chmod -R g+rwx /var/log/habana_logs
 
+# Copy license
 COPY LICENSE /licenses/vllm.md
-COPY examples/*.jinja /app/data/template/
 
-#USER 2000
-# Note: staying root because entrypoint starts sshd and then changes to vllm
-WORKDIR /home/vllm
-
-ENTRYPOINT ["/usr/bin/vllm-entrypoint.sh"]
+USER 2000
+ENTRYPOINT ["python3", "-m", "vllm.entrypoints.openai.api_server"]
 
 ######## vllm-grpc-adapter ####################################################
-FROM vllm-openai as vllm-grpc-adapter
+#FROM vllm-openai as vllm-grpc-adapter
 
-USER root
+#USER root
 
-ARG VLLM_TGIS_ADAPTER_VERSION="0.7.1"
-RUN --mount=type=cache,target=/root/.cache/pip \
-    --mount=type=bind,from=build,src=/workspace/dist,target=/workspace/dist \
-    pip install \
-          prometheus_client==0.21.1 \
-          grpcio==1.70.0 \
-          grpcio-health-checking==1.70.0 \
-          grpcio-reflection==1.70.0 \
-          accelerate==1.7.0 \
-          hf-transfer==0.1.9 \
-          cachetools~=5.5 && \
-    pip install vllm-tgis-adapter==${VLLM_TGIS_ADAPTER_VERSION} --no-deps
+#ARG VLLM_TGIS_ADAPTER_VERSION="0.7.1"
+#RUN pip install \
+#          prometheus_client==0.21.1 \
+#          grpcio==1.70.0 \
+#          grpcio-health-checking==1.70.0 \
+#          grpcio-reflection==1.70.0 \
+#          accelerate==1.7.0 \
+#          hf-transfer==0.1.9 \
+#          cachetools~=5.5 && \
+#    pip install vllm-tgis-adapter==${VLLM_TGIS_ADAPTER_VERSION} --no-deps
 
-ENV GRPC_PORT=8033 \
-    PORT=8000 \
+#ENV GRPC_PORT=8033 \
+#    PORT=8000 \
     # As an optimization, vLLM disables logprobs when using spec decoding by
     # default, but this would be unexpected to users of a hosted model that
     # happens to have spec decoding
     # see: https://github.com/vllm-project/vllm/pull/6485
-    DISABLE_LOGPROBS_DURING_SPEC_DECODING=false
+#    DISABLE_LOGPROBS_DURING_SPEC_DECODING=false
 
 #USER 2000
-# Note: staying root because entrypoint starts sshd and then changes to vllm
-ENTRYPOINT ["/usr/bin/tgis-entrypoint.sh"]
+#ENTRYPOINT ["python3", "-m", "vllm_tgis_adapter", "--uvicorn-log-level=warning"]
 
 LABEL name="rhoai/odh-vllm-gaudi-rhel9" \
       com.redhat.component="odh-vllm-gaudi-rhel9" \
