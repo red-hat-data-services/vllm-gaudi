@@ -463,7 +463,7 @@ referencing==0.35.1
     # via
     #   jsonschema
     #   jsonschema-specifications
-regex==2024.9.11
+regex==2026.1.15
     # via
     #   nltk
     #   sacrebleu
