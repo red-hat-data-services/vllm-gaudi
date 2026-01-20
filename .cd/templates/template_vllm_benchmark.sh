@@ -3,7 +3,7 @@
 #@VARS
 
 # Wait for vLLM server to be ready
-until curl -s http://localhost:8000${ENDPOINT} > /dev/null; do
+until curl -s http://localhost:8000/v1/models > /dev/null; do
     echo "Waiting for vLLM server to be ready..."
     sleep 15
 done
@@ -21,7 +21,7 @@ if [[ "$DATASET_NAME" == "hf" ]]; then
 fi
 
 ## Start benchmarking vLLM serving
-python3 /workspace/vllm/benchmarks/benchmark_serving.py \
+vllm bench serve \
                 --model $MODEL \
                 --base-url http://localhost:8000 \
                 --endpoint $ENDPOINT \
@@ -35,4 +35,6 @@ python3 /workspace/vllm/benchmarks/benchmark_serving.py \
                 --metric-percentiles 90 \
                 --ignore-eos \
                 --trust-remote-code \
-2>&1 | tee -a logs/perftest_inp${INPUT_TOK}_out${OUTPUT_TOK}_user${CONCURRENT_REQ}.log
+                --save-result \
+                --result-dir logs \
+                --result-filename summary_inp${INPUT_TOK}_out${OUTPUT_TOK}_user${CONCURRENT_REQ}.json 2>&1 | stdbuf -o0 -e0 tr '\r' '\n' | tee -a logs/summary_inp${INPUT_TOK}_out${OUTPUT_TOK}_user${CONCURRENT_REQ}.log #save results to logs on a host
