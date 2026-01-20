@@ -1,0 +1,115 @@
+###############################################################################
+# Copyright (C) 2025 Intel Corporation
+#
+# This source code is licensed under the Apache 2.0 license found in the
+# LICENSE file in the root directory of this source tree.
+###############################################################################
+
+from vllm_gaudi.extension.config import Not, Hardware, VersionRange, ModelType, Kernel, Any, All, Value, ValueFromList, Env, Enabled, Disabled, Engine, MinPackageVersion, boolean, to_dict, split_values_and_flags, list_of
+from vllm_gaudi.extension.kernels import fsdpa, block_softmax_adjustment, softmax_fa2
+from vllm_gaudi.extension.validation import for_all, choice
+
+
+def get_user_flags():
+    flags = [
+        Env('VLLM_DEVELOPER_MODE', boolean),
+        Env('VLLM_EXPONENTIAL_BUCKETING', boolean),
+        Env('VLLM_PROMPT_BS_BUCKET_MIN', int),
+        Env('VLLM_PROMPT_BS_BUCKET_STEP', int),
+        Env('VLLM_PROMPT_BS_BUCKET_MAX', int),
+        Env('VLLM_PROMPT_QUERY_BUCKET_MIN', int),
+        Env('VLLM_PROMPT_QUERY_BUCKET_STEP', int),
+        Env('VLLM_PROMPT_QUERY_BUCKET_MAX', int),
+        Env('VLLM_PROMPT_SEQ_BUCKET_MIN', int),
+        Env('VLLM_PROMPT_SEQ_BUCKET_STEP', int),
+        Env('VLLM_PROMPT_SEQ_BUCKET_MAX', int),
+        Env('VLLM_PROMPT_CTX_BUCKET_MIN', int),
+        Env('VLLM_PROMPT_CTX_BUCKET_STEP', int),
+        Env('VLLM_PROMPT_CTX_BUCKET_MAX', int),
+        Env('VLLM_DECODE_BS_BUCKET_MIN', int),
+        Env('VLLM_DECODE_BS_BUCKET_STEP', int),
+        Env('VLLM_DECODE_BS_BUCKET_MAX', int),
+        Env('VLLM_DECODE_BLOCK_BUCKET_MIN', int),
+        Env('VLLM_DECODE_BLOCK_BUCKET_STEP', int),
+        Env('VLLM_DECODE_BLOCK_BUCKET_MAX', int),
+        Env('VLLM_DECODE_BLOCK_BUCKET_LIMIT', int),
+        Env('VLLM_BUCKETING_FROM_FILE', str),
+
+        # Non-vllm flags that are also important to print
+        Env('EXPERIMENTAL_WEIGHT_SHARING', str),
+        Env('PT_HPU_WEIGHT_SHARING', str),
+        Env('RUNTIME_SCALE_PATCHING', str),
+
+        # Sliding window flags
+        Env('PT_HPU_SDPA_QKV_SLICE_MODE_FWD', boolean),
+        Env('PT_HPU_SDPA_BC_FACTOR', int),
+        Env('VLLM_FUSEDSDPA_SLIDE_THLD', int),
+    ]
+    return to_dict(flags)
+
+
+def get_experimental_flags():
+    flags = [
+        Env('VLLM_PT_PROFILE', str),
+        Env('VLLM_PROFILE_PROMPT', str),
+        Env('VLLM_PROFILE_DECODE', str),
+        Env('VLLM_PROFILE_STEPS', list_of(int)),
+        Env('VLLM_DEFRAG_THRESHOLD', int),
+        Env('VLLM_DEFRAG_WITH_GRAPHS', boolean),
+        Env('VLLM_DEBUG', list_of(str), check=for_all(choice('steps', 'defrag', 'fwd'))),
+    ]
+    return to_dict(flags)
+
+
+def get_features():
+    supported_attn_impls = ['flex_impl', 'fsdpa_impl', 'naive_impl']
+    bucketing_strategies = ['exponential_bucketing', 'linear_bucketing']
+    features = [
+        Value('fp32_alibi_biases', True, env_var='VLLM_ALIBI_USE_FLOAT32_BIASES'),
+        Value('fp32_softmax', ModelType('qwen2')),
+        Value(
+            'fused_block_softmax_adjustment',
+            All(VersionRange(">=1.22.0.494"), Hardware('gaudi3'), Kernel(block_softmax_adjustment),
+                Not(ModelType('qwen2')))),
+        Value('fused_block_softmax', False),
+        Value('flex_impl', False, env_var='VLLM_PROMPT_USE_FLEX_ATTENTION'),
+        Value('fsdpa_impl', All(Kernel(fsdpa), Not(ModelType('mllama'))), env_var='VLLM_PROMPT_USE_FUSEDSDPA'),
+        Value('naive_impl', True),
+        ValueFromList('prompt_attn_impl', supported_attn_impls),
+        Value('skip_warmup', False),
+        Value('merged_prefill', Enabled('unified_attn')),
+        Value('use_contiguous_pa',
+              Any(Disabled('prefix_caching'), Enabled('unified_attn')),
+              env_var='VLLM_CONTIGUOUS_PA'),
+        Value('use_bucketing', True, env_var='VLLM_ENABLE_BUCKETING'),
+        Value('exponential_bucketing', True),
+        Value('linear_bucketing', True),
+        ValueFromList('bucketing_strategy', bucketing_strategies),
+        Value('defrag', Enabled('unified_attn')),
+        Value('regional_compilation', True, env_var='VLLM_T_COMPILE_REGIONAL_COMPILATION', env_var_type=boolean),
+        Value('dynamic_shapes_compilation', True, env_var='VLLM_T_COMPILE_DYNAMIC_SHAPES', env_var_type=boolean),
+        Value('fullgraph_compilation', False, env_var='VLLM_T_COMPILE_FULLGRAPH', env_var_type=boolean),
+        Value('unified_attn', False),
+        Value('unified_attn_softmax_fa2',
+              All(VersionRange(">=1.24.0.279"), Enabled('unified_attn'), Kernel(softmax_fa2), Hardware('gaudi3'))),
+        Value('scale_adjustment', True, env_var='VLLM_SCALE_ADJUSTMENT', env_var_type=boolean),
+        Value('flatten_input', Any(ModelType('qwen3_moe'), ModelType('granitemoe'), ModelType('glm4_moe'))),
+        Value('unified_attn_shared_cache_ratio',
+              1.,
+              env_var='VLLM_UNIFIED_ATTENTION_SHARED_CACHE_RATIO',
+              env_var_type=float),
+        Value('high_level_profiler_enabled', False, env_var='VLLM_PROFILER_ENABLED', env_var_type=boolean),
+        Value('track_graph_compilation', False, env_var='PT_HPU_METRICS_GC_DETAILS', env_var_type=boolean),
+        Value('use_output_tensor_in_matmulqk',
+              All(VersionRange(">=1.24.0.171"), MinPackageVersion("neural_compressor_pt", "3.6")),
+              env_var_type=boolean),
+        Value('per_token_kv_scaling_support',
+              All(VersionRange(">=1.24.0.350"), MinPackageVersion("neural_compressor_pt", "3.6")),
+              env_var_type=boolean),
+        Value('moe_chunk', "", env_var='VLLM_MOE_CHUNK', env_var_type=list_of(int)),
+        Value('moe_token_boundary', "", env_var='VLLM_MOE_TOKEN_BOUNDARY', env_var_type=list_of(int)),
+        Value('use_dispatch_fn',
+              All(VersionRange(">=1.24.0.460"), MinPackageVersion("neural_compressor_pt", "3.6")),
+              env_var_type=boolean),
+    ]
+    return split_values_and_flags(features)
