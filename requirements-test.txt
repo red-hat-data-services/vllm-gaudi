@@ -524,7 +524,7 @@ tomli==2.0.2
     # via
     #   black
     #   pytest
-torch==2.5.1
+torch==2.10.0
     # via
     #   -r requirements-test.in
     #   accelerate
