@@ -324,7 +324,7 @@ packaging==24.1
     #   ray
     #   transformers
     #   typepy
-pandas==2.2.3
+pandas==3.0.0
     # via
     #   datasets
     #   evaluate
