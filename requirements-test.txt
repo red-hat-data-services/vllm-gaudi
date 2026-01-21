@@ -606,7 +606,7 @@ torchaudio==2.5.1
     #   -r requirements-test.in
     #   encodec
     #   vocos
-torchvision==0.20.1
+torchvision==0.25.0
     # via timm
 tqdm==4.66.6
     # via
