@@ -396,7 +396,7 @@ pyasn1==0.6.1
     # via rsa
 pybind11==2.13.6
     # via lm-eval
-pycparser==2.22
+pycparser==3.0
     # via cffi
 pydantic[email]==2.9.2
     # via
