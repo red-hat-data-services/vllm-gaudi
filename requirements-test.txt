@@ -234,7 +234,7 @@ msgpack==1.1.0
     # via
     #   librosa
     #   ray
-multidict==6.1.0
+multidict==6.7.1
     # via
     #   aiohttp
     #   yarl
