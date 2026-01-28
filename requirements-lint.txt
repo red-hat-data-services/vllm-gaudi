@@ -9,7 +9,7 @@ clang-format==18.1.5
 pymarkdownlnt==0.9.26
 
 # type checking
-mypy==1.11.1
+mypy==1.19.1
 types-PyYAML
 types-requests
 types-setuptools
