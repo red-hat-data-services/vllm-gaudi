@@ -15,7 +15,7 @@ ARG VLLM_PROJECT_COMMIT=v0.13.0
 # ============================================================================
 # Stage 1: gaudi-base - Base system setup with Habana drivers
 # ============================================================================
-FROM registry.access.redhat.com/ubi9/ubi:9.6 AS gaudi-base
+FROM registry.access.redhat.com/ubi9/ubi:9.7-1770238273 AS gaudi-base
 
 # Re-declare global ARGs to use them in this stage
 ARG ARTIFACTORY_URL
