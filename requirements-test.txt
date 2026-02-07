@@ -547,7 +547,7 @@ tabulate==0.9.0
     # via sacrebleu
 tcolorpy==0.1.6
     # via pytablewriter
-tenacity==9.0.0
+tenacity==9.1.4
     # via
     #   lm-eval
     #   plotly
