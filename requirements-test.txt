@@ -457,7 +457,7 @@ pyyaml==6.0.2
     #   transformers
 ray[adag]==2.40.0
     # via -r requirements-test.in
-redis==5.2.0
+redis==7.1.1
     # via tensorizer
 referencing==0.35.1
     # via
