@@ -69,8 +69,8 @@ RUN alternatives --install /usr/bin/python3 python3 /usr/bin/python3.12 2 && \
     ln -s /usr/bin/python3 /usr/bin/python
 
 # Install base Python packages
-RUN pip install setuptools==79.0.1 wheel setuptools_scm && \
-    pip install --upgrade Jinja2 protobuf urllib3 requests
+RUN pip install --no-cache-dir setuptools==79.0.1 wheel setuptools_scm && \
+    pip install --no-cache-dir --upgrade Jinja2 protobuf urllib3 requests
 
 # Setup Habana repository and install Habana packages
 RUN printf "[habanalabs]\\nname=Habana RH9 Linux repo\\nbaseurl=https://${ARTIFACTORY_URL}/artifactory/rhel/9/9.6\\ngpgkey=https://${ARTIFACTORY_URL}/artifactory/rhel/9/9.6/repodata/repomd.xml.key\\ngpgcheck=1\\n" > /etc/yum.repos.d/habanalabs.repo && \
@@ -96,7 +96,7 @@ RUN printf "[habanalabs]\\nname=Habana RH9 Linux repo\\nbaseurl=https://${ARTIFA
           /etc/yum.repos.d/CentOS-Linux-AppStream.repo
 
 # Install Habana media loader and configure Python path
-RUN pip install habana-media-loader=="${SYNAPSE_VERSION}"."${SYNAPSE_REVISION}" && \
+RUN pip install --no-cache-dir habana-media-loader=="${SYNAPSE_VERSION}"."${SYNAPSE_REVISION}" && \
     echo "/usr/lib/habanalabs" > $(python3 -c "import sysconfig; print(sysconfig.get_path('platlib'))")/habanalabs-graph.pth
 
 # ============================================================================
@@ -122,6 +122,7 @@ RUN PT_PACKAGE_NAME="pytorch_modules-v${PT_VERSION}_${SYNAPSE_VERSION}_${SYNAPSE
     tar -zxf "${PT_PACKAGE_NAME}" -C "${TMP_PATH}" && \
     cd "${TMP_PATH}" && \
     export SKIP_INSTALL_DEPENDENCIES=1 && \
+    export PIP_NO_CACHE_DIR=1 && \
     ./install.sh $SYNAPSE_VERSION $SYNAPSE_REVISION $TORCH_TYPE && \
     cd / && \
     rm -rf "${TMP_PATH}" "${PT_PACKAGE_NAME}"
@@ -169,11 +170,11 @@ RUN set -e && \
     git remote add upstream https://github.com/vllm-project/vllm.git && \
     git fetch upstream --tags && \
     git checkout ${VLLM_PROJECT_COMMIT} && \
-    pip install -r <(sed '/^torch/d' requirements/build.txt) && \
-    VLLM_TARGET_DEVICE=empty pip install --no-build-isolation . && \
+    pip install --no-cache-dir -r <(sed '/^torch/d' requirements/build.txt) && \
+    VLLM_TARGET_DEVICE=empty pip install --no-cache-dir --no-build-isolation . && \
     cd $VLLM_PATH2 && \
     git checkout ${VLLM_GAUDI_COMMIT} && \
-    VLLM_TARGET_DEVICE=hpu pip install -v . --no-build-isolation
+    VLLM_TARGET_DEVICE=hpu pip install --no-cache-dir -v . --no-build-isolation
 
 # The scripts below are used for benchmarks testing and autocalc:
 # RUN pip3 install -v -e $VLLM_PATH/tests/vllm_test_utils
