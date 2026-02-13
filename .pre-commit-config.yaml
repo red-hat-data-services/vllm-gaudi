@@ -12,7 +12,7 @@ repos:
   - id: yapf
     args: [--in-place, --verbose]
 - repo: https://github.com/astral-sh/ruff-pre-commit
-  rev: v0.11.7
+  rev: v0.15.1
   hooks:
   - id: ruff
     args: [--output-format, github, --fix]
