@@ -117,7 +117,7 @@ exceptiongroup==1.2.2
     #   pytest
 fastrlock==0.8.2
     # via cupy-cuda12x
-filelock==3.16.1
+filelock==3.24.1
     # via
     #   datasets
     #   huggingface-hub
