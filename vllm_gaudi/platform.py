@@ -12,9 +12,9 @@ from vllm.platforms import Platform, PlatformEnum
 from vllm_gaudi.extension.runtime import get_config
 
 if TYPE_CHECKING:
-    from vllm.attention.selector import AttentionSelectorConfig
+    from vllm.v1.attention.selector import AttentionSelectorConfig
     from vllm.config import ModelConfig, VllmConfig
-    from vllm.attention.backends.registry import AttentionBackendEnum
+    from vllm.v1.attention.backends.registry import AttentionBackendEnum
 else:
     ModelConfig = None
     VllmConfig = None
@@ -153,6 +153,11 @@ class HpuPlatform(Platform):
         # Disable multi-stream for shared experts as no Stream on CPU
         os.environ["VLLM_DISABLE_SHARED_EXPERTS_STREAM"] = "1"
 
+        # NOTE: vLLM has default enabled async scheduling with speculative decoding is on.
+        # However, for HPU, speculative decoding is not supported with async scheduling.
+        vllm_config.scheduler_config.async_scheduling = \
+            vllm_config.scheduler_config.async_scheduling and vllm_config.speculative_config is None
+
     @classmethod
     def is_pin_memory_available(cls):
         logger.warning("Pin memory is not supported on HPU.")
@@ -161,6 +166,10 @@ class HpuPlatform(Platform):
     @classmethod
     def get_punica_wrapper(cls) -> str:
         return "vllm_gaudi.lora.punica_wrapper.punica_hpu.PunicaWrapperHPU"
+
+    @classmethod
+    def support_hybrid_kv_cache(cls) -> bool:
+        return True
 
     @classmethod
     def get_device_communicator_cls(cls) -> str:

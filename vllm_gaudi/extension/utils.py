@@ -53,7 +53,7 @@ class VLLMKVCache(torch.nn.Module):
         # is_v_cache is used in INC FP8 dynamic quantization to identify V cache
         self.is_v_cache = is_v_cache
 
-    def forward(self, input, cache, slot_mapping, scales=None, **kwargs):
+    def forward(self, input, cache, slot_mapping, scales=None, block_size=None, is_prompt=False, **kwargs):
         # In cross-attention kv cache forward inputs are None in decode
         # We don't want to store them in the cache in such case
         if input is not None:
@@ -123,7 +123,7 @@ class FP8Matmul(torch.nn.Module):
             accumulate=False,
         )
 
-    def forward(self, input, other):
+    def forward(self, input, other, **kwargs):
         qinput = self.quant_input(input, self.scale_input)
         qother = self.quant_input(other, self.scale_other)
         output = self.matmul_fp8(
