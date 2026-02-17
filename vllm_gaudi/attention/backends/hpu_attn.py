@@ -15,8 +15,8 @@ import vllm_gaudi.extension.ops as ops
 from vllm_gaudi.extension.runtime import get_config
 from vllm_gaudi.extension.utils import (FP8Matmul, Matmul, ModuleFusedSDPA, Softmax, VLLMFP8KVCache, VLLMKVCache)
 
-from vllm.attention.backends.abstract import (AttentionBackend, AttentionImpl, AttentionLayer, AttentionMetadata,
-                                              AttentionType)
+from vllm.v1.attention.backend import (AttentionBackend, AttentionImpl, AttentionLayer, AttentionMetadata,
+                                       AttentionType)
 from vllm.v1.attention.backends.mla.common import MLACommonImpl
 from vllm_gaudi.attention.ops.hpu_paged_attn import (HPUPagedAttention, HPUPagedAttentionMetadata,
                                                      HPUPagedAttentionMetadataBuilder)
@@ -24,7 +24,7 @@ from vllm_gaudi.attention.ops.hpu_paged_attn import (HPUPagedAttention, HPUPaged
 from vllm_gaudi.extension.logger import logger as init_logger
 from vllm_gaudi.extension.unified import (unified_attn, unified_mla, HPUUnifiedAttentionMetadata)
 from vllm.model_executor.layers.linear import ColumnParallelLinear
-from vllm.attention.backends.registry import (register_backend, AttentionBackendEnum)
+from vllm.v1.attention.backends.registry import (register_backend, AttentionBackendEnum)
 from vllm._aiter_ops import rocm_aiter_ops
 
 logger = init_logger()
@@ -148,6 +148,7 @@ class HPUAttentionMetadata(HPUPagedAttentionMetadata, AttentionMetadata):
     # or all decoding. True if all sequences are prompts.
     is_prompt: bool
     block_size: int
+    prep_initial_states: bool
     slot_mapping: torch.Tensor
     attn_bias: Optional[torch.Tensor]
     seq_lens_tensor: Optional[torch.Tensor]
@@ -169,6 +170,15 @@ class HPUAttentionMetadata(HPUPagedAttentionMetadata, AttentionMetadata):
     window_block_groups: Optional[torch.Tensor] = None
     window_block_usage: Optional[torch.Tensor] = None
     window_attn_bias: Optional[torch.Tensor] = None
+    chunked_slot_mapping: Optional[torch.Tensor] = None
+    chunked_attn_bias: Optional[torch.Tensor] = None
+    chunked_block_mapping: Optional[torch.Tensor] = None
+    chunked_block_list: Optional[torch.Tensor] = None
+    chunked_block_groups: Optional[torch.Tensor] = None
+    chunked_block_usage: Optional[torch.Tensor] = None
+    has_initial_states_p: Optional[torch.Tensor] = None
+    last_chunk_indices_p: Optional[torch.Tensor] = None
+    state_indices_tensor: Optional[torch.Tensor] = None  # shape: [batch,]
 
 
 @dataclass
@@ -492,6 +502,7 @@ class HPUAttentionImpl(AttentionImpl, torch.nn.Module):
             raise NotImplementedError("Encoder self-attention "
                                       "is not implemented for "
                                       "HPUAttentionImpl")
+        self.is_chunked_attention = False
 
     def _maybe_init_alibi_biases(
         self,
@@ -576,8 +587,18 @@ class HPUAttentionImpl(AttentionImpl, torch.nn.Module):
             # Reshape the input keys and values and store them in the cache.
             # If kv_cache is not provided, the new key and value tensors are
             # not cached. This happens during the initial memory profiling run.
-            key_cache = self.k_cache(key, key_cache, slot_mapping, k_scales)
-            value_cache = self.v_cache(value, value_cache, slot_mapping, v_scales)
+            key_cache = self.k_cache(key,
+                                     key_cache,
+                                     slot_mapping,
+                                     scales=k_scales,
+                                     block_size=attn_metadata.block_size,
+                                     is_prompt=attn_metadata.is_prompt)
+            value_cache = self.v_cache(value,
+                                       value_cache,
+                                       slot_mapping,
+                                       scales=v_scales,
+                                       block_size=attn_metadata.block_size,
+                                       is_prompt=attn_metadata.is_prompt)
 
         if attn_metadata.is_prompt:
             # Prompt run.
@@ -620,6 +641,9 @@ class HPUAttentionImpl(AttentionImpl, torch.nn.Module):
                     attn_bias = None
                     window_size = (self.sliding_window, 0)
                     common_args['window_size'] = window_size
+            if self.is_chunked_attention and \
+                hasattr(attn_metadata, 'chunked_attn_bias') and attn_metadata.chunked_attn_bias is not None:
+                attn_bias = attn_metadata.chunked_attn_bias
 
             out = ops.prompt_attention(impl=self.prefill_impl,
                                        query=query.view(query_shape),
@@ -640,6 +664,12 @@ class HPUAttentionImpl(AttentionImpl, torch.nn.Module):
                 block_groups = attn_metadata.window_block_groups
                 block_mapping = attn_metadata.window_block_mapping
                 attn_bias = attn_metadata.window_attn_bias
+            elif self.is_chunked_attention and \
+                attn_metadata.chunked_block_list is not None:
+                block_list = attn_metadata.chunked_block_list
+                block_groups = attn_metadata.chunked_block_groups
+                block_mapping = attn_metadata.chunked_block_mapping
+                attn_bias = attn_metadata.chunked_attn_bias
             else:
                 block_list = attn_metadata.block_list
                 block_groups = attn_metadata.block_groups
@@ -744,8 +774,18 @@ class HPUAttentionImpl(AttentionImpl, torch.nn.Module):
             # Reshape the input keys and values and store them in the cache.
             # If kv_cache is not provided, the new key and value tensors are
             # not cached. This happens during the initial memory profiling run.
-            key_cache = self.k_cache(key, key_cache, cross_slot_mapping, k_scales)
-            value_cache = self.v_cache(value, value_cache, cross_slot_mapping, v_scales)
+            key_cache = self.k_cache(key,
+                                     key_cache,
+                                     cross_slot_mapping,
+                                     scales=k_scales,
+                                     block_size=attn_metadata.block_size,
+                                     is_prompt=attn_metadata.is_prompt)
+            value_cache = self.v_cache(value,
+                                       value_cache,
+                                       cross_slot_mapping,
+                                       scales=v_scales,
+                                       block_size=attn_metadata.block_size,
+                                       is_prompt=attn_metadata.is_prompt)
 
         if attn_metadata.is_prompt:
             # Prompt run.
@@ -917,7 +957,7 @@ class HPUUnifiedAttentionImpl(AttentionImpl, torch.nn.Module):
         query: torch.Tensor,
         key: torch.Tensor,
         value: torch.Tensor,
-        kv_cache: tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor],
+        kv_cache: tuple[torch.Tensor, torch.Tensor, torch.Tensor, tuple[torch.Tensor, torch.Tensor]],
         attn_metadata: HPUUnifiedAttentionMetadata,
         output: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
@@ -930,8 +970,16 @@ class HPUUnifiedAttentionImpl(AttentionImpl, torch.nn.Module):
         query = query.unflatten(-1, (-1, self.head_size))
         key = key.unflatten(-1, (-1, self.head_size))
         value = value.unflatten(-1, (-1, self.head_size))
-        key_cache = self.k_cache(key, key_cache, attn_metadata.slot_mapping, k_scales)
-        value_cache = self.v_cache(value, value_cache, attn_metadata.slot_mapping, v_scales)
+        key_cache = self.k_cache(key,
+                                 key_cache,
+                                 attn_metadata.slot_mapping,
+                                 scales=k_scales,
+                                 block_size=attn_metadata.block_size)
+        value_cache = self.v_cache(value,
+                                   value_cache,
+                                   attn_metadata.slot_mapping,
+                                   scales=v_scales,
+                                   block_size=attn_metadata.block_size)
         output = unified_attn(
             query=query,
             key=key,
