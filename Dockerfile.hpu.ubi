@@ -6,7 +6,7 @@ USER root
 ENV VLLM_TARGET_DEVICE="hpu"
 ENV HABANA_SOFTWARE_VERSION="1.20.0-543"
 
-RUN dnf -y update --best --allowerasing --skip-broken && dnf clean all
+RUN dnf -y update --best --allowerasing --skip-broken --exclude=python3.11-rpm && dnf clean all
 
 WORKDIR /workspace
 
