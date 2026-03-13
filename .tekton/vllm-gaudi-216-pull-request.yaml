@@ -35,6 +35,8 @@ spec:
     value: "false"
   - name: skip-checks
     value: "true"
+  - name: rhoai-version
+    value: "2.16.4"
   pipelineRef:
     resolver: git
     params:
