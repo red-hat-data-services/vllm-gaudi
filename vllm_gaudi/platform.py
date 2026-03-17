@@ -12,9 +12,9 @@ from vllm.platforms import Platform, PlatformEnum
 from vllm_gaudi.extension.runtime import get_config
 
 if TYPE_CHECKING:
-    from vllm.attention.selector import AttentionSelectorConfig
+    from vllm.v1.attention.selector import AttentionSelectorConfig
     from vllm.config import ModelConfig, VllmConfig
-    from vllm.attention.backends.registry import AttentionBackendEnum
+    from vllm.v1.attention.backends.registry import AttentionBackendEnum
 else:
     ModelConfig = None
     VllmConfig = None
@@ -36,7 +36,7 @@ class HpuPlatform(Platform):
     dispatch_key: str = "HPU"
     ray_device_key: str = "HPU"
     device_control_env_var: str = "HABANA_VISIBLE_MODULES"
-    supported_quantization: list[str] = ["compressed-tensors", "fp8", "inc", "awq_hpu", "gptq_hpu"]
+    supported_quantization: list[str] = ["compressed-tensors", "fp8", "inc", "awq_hpu", "gptq_hpu", "modelopt"]
     simple_compile_backend = "hpu_backend"
     additional_env_vars = [k for k, v in os.environ.items() if retain_envs(k)]
 
@@ -65,6 +65,19 @@ class HpuPlatform(Platform):
             logger.info("Using HPUAttentionV1 backend.")
             return ("vllm_gaudi.v1.attention.backends."
                     "hpu_attn.HPUAttentionBackendV1")
+
+    @classmethod
+    def validate_request(
+        cls,
+        prompt,
+        params,
+        processed_inputs,
+    ) -> None:
+        from vllm.sampling_params import SamplingParams
+        if isinstance(params, SamplingParams) and (params.logprobs is not None or params.prompt_logprobs is not None):
+            raise ValueError("Gaudi doesn't support logprobs. Please remove "
+                             "'logprobs'/'top_logprobs' from your request to "
+                             "receive a response.")
 
     @classmethod
     def is_async_output_supported(cls, enforce_eager: Optional[bool]) -> bool:
@@ -150,8 +163,23 @@ class HpuPlatform(Platform):
 
         print(f"========={compilation_config.custom_ops=}===========")
 
+        # Force CPU loading for INC quantization to prevent OOM during weight loading.
+        # INC FP8 quantization requires weights to be loaded to CPU first, then
+        # quantized and moved to device. Without this, weights are loaded directly
+        # to HPU in BF16 which causes OOM for large models.
+        model_config = vllm_config.model_config
+        is_inc_quant = (model_config is not None and model_config.quantization == "inc") or os.getenv("QUANT_CONFIG")
+        if is_inc_quant and vllm_config.load_config is not None and vllm_config.load_config.device is None:
+            logger.info("[HPU] INC quantization detected, loading weights to CPU first")
+            vllm_config.load_config.device = "cpu"
+
         # Disable multi-stream for shared experts as no Stream on CPU
         os.environ["VLLM_DISABLE_SHARED_EXPERTS_STREAM"] = "1"
+
+        # NOTE: vLLM has default enabled async scheduling with speculative decoding is on.
+        # However, for HPU, speculative decoding is not supported with async scheduling.
+        vllm_config.scheduler_config.async_scheduling = \
+            vllm_config.scheduler_config.async_scheduling and vllm_config.speculative_config is None
 
     @classmethod
     def is_pin_memory_available(cls):
@@ -161,6 +189,10 @@ class HpuPlatform(Platform):
     @classmethod
     def get_punica_wrapper(cls) -> str:
         return "vllm_gaudi.lora.punica_wrapper.punica_hpu.PunicaWrapperHPU"
+
+    @classmethod
+    def support_hybrid_kv_cache(cls) -> bool:
+        return True
 
     @classmethod
     def get_device_communicator_cls(cls) -> str:

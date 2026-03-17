@@ -42,11 +42,11 @@ create_measure_config() {
     model_name_lower=$(echo "$2" | tr '[:upper:]' '[:lower:]')
 
     if [[ $model_name_lower =~ ^mixtral ]]; then
-        tmp_config="{\"method\": \"HOOKS\",\"mode\": \"MEASURE\",\"observer\": \"maxabs\",\"allowlist\": {\"types\": [], \"names\":  []},\"blocklist\": {\"types\": [], \"names\":  [\"self_attn\", \"lm_head\"]},\"quantize_weight\": false,\"dump_stats_path\": \"$1/$2/$3/inc_output\"}"
+        tmp_config="{\"method\": \"HOOKS\",\"mode\": \"MEASURE\",\"observer\": \"maxabs\",\"allowlist\": {\"types\": [], \"names\":  []},\"blocklist\": {\"types\": [], \"names\":  [\"self_attn\", \"lm_head\"]},\"quantize_weight\": false,\"dump_stats_path\": \"$1/$2/$3/inc_output\",\"calibration_sample_interval\": 1}"
     elif [[ $model_name_lower =~ ^deepseek ]]; then
-        tmp_config="{\"method\": \"HOOKS\",\"mode\": \"MEASURE\",\"observer\": \"maxabs\",\"allowlist\": {\"types\": [], \"names\":  []},\"blocklist\": {\"types\": [], \"names\":  [\"lm_head\", \"mlp\\\.gate\\\b\"]},\"quantize_weight\": false,\"dump_stats_path\": \"$1/$2/$3/inc_output\"}"
+        tmp_config="{\"method\": \"HOOKS\",\"mode\": \"MEASURE\",\"observer\": \"maxabs\",\"allowlist\": {\"types\": [], \"names\":  []},\"blocklist\": {\"types\": [], \"names\":  [\"lm_head\", \"mlp\\\.gate\\\b\"]},\"quantize_weight\": false,\"dump_stats_path\": \"$1/$2/$3/inc_output\",\"calibration_sample_interval\": 1}"
     else
-        tmp_config="{\"method\": \"HOOKS\",\"mode\": \"MEASURE\",\"observer\": \"maxabs\",\"allowlist\": {\"types\": [], \"names\":  []},\"blocklist\": {\"types\": [], \"names\":  []},\"quantize_weight\": false,\"dump_stats_path\": \"$1/$2/$3/inc_output\"}"
+        tmp_config="{\"method\": \"HOOKS\",\"mode\": \"MEASURE\",\"observer\": \"maxabs\",\"allowlist\": {\"types\": [], \"names\":  []},\"blocklist\": {\"types\": [], \"names\":  []},\"quantize_weight\": false,\"dump_stats_path\": \"$1/$2/$3/inc_output\",\"calibration_sample_interval\": 1}"
     fi
     echo "$tmp_config" > $1/$2/maxabs_measure_$3.json
 }
@@ -94,7 +94,7 @@ MULTI_NODE_SETUP=false
 USE_EP=""
 ENFORCE_EAGER=false
 
-while getopts "m:b:l:t:d:h:o:r:u:e" OPT; do
+while getopts "m:b:l:t:d:h:o:r:ue" OPT; do
     case ${OPT} in
         m )
             MODEL_PATH="$OPTARG"
@@ -117,9 +117,9 @@ while getopts "m:b:l:t:d:h:o:r:u:e" OPT; do
         r )
             RANK="$OPTARG"
             ;;
-	u )
-	    USE_EP="--use_expert_paral"
-	    ;;
+        u )
+            USE_EP="--use_expert_paral"
+            ;;
         e ) 
             ENFORCE_EAGER=true
             ;;
@@ -143,17 +143,16 @@ fi
 MODEL_NAME=$(extract_last_folder_name "$MODEL_PATH")
 model_name_lower=$(echo "$MODEL_NAME" | tr '[:upper:]' '[:lower:]')
 
-echo "Step 0 - detecting used device type [g2, g3]"
-DEVICE_TYPE=$(python3 step-0-detect-device.py) || (echo "Detecting device process failed" && exit 1)
-DEVICE_TYPE="g$DEVICE_TYPE"
-echo "Detected device type: $DEVICE_TYPE"
-echo "Step 0 done"
-
+echo "Step 0 - detecting used device type ${ALLOWED_DEVICES[*]}"
+python3 step-0-detect-device.py > /dev/null  || DEVICE_TYPE=$?
+DEVICE_TYPE="g${DEVICE_TYPE}"
 # Check if the provided device type is valid
 if [[ ! " ${ALLOWED_DEVICES[*]} " =~ " $DEVICE_TYPE " ]]; then
     echo "Invalid device type: $DEVICE_TYPE. Allowed devices: ${ALLOWED_DEVICES[*]}"
     exit 1
 fi
+echo "Detected device type: $DEVICE_TYPE"
+echo "Step 0 done"
 
 if [[ $TP_SIZE -gt 8 ]]; then
     MULTI_NODE_SETUP=true
@@ -227,6 +226,12 @@ fi
 if $ENFORCE_EAGER; then
     EXTRA_FLAGS_STEP_2+="--enforce-eager "
     EXTRA_FLAGS_STEP_4+="--enforce-eager "
+fi
+
+# if USE_EP is not empty, then add --expert-parallel flags
+if [[ -n $USE_EP ]]; then
+    EXTRA_FLAGS_STEP_2+="--expert-parallel "
+    EXTRA_FLAGS_STEP_4+="--expert-parallel "
 fi
 
 if $SKIP_STEP_1; then
