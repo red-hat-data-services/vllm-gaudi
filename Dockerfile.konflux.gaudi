@@ -16,10 +16,8 @@ ARG PT_MODULES_REPO_NAME=gaudi-pt-modules
 ARG PT_PACKAGE_NAME_NON_DEFAULT_PYTHON_SUBSTRING=
 ARG PYPI_INDEX_URL="https://pypi.org/simple/"
 ARG HABANA_RPM_REPO_PATH="rhel/9/${OS_VERSION}"
-# can be upstream or fork
-ARG TORCH_TYPE=upstream
-ARG VLLM_GAUDI_COMMIT=v0.16.0
-ARG VLLM_PROJECT_COMMIT=v0.16.0
+ARG VLLM_GAUDI_COMMIT=v0.17.1
+ARG VLLM_PROJECT_COMMIT=v0.17.1
 
 # ============================================================================
 # Stage 1: gaudi-base - Base system setup with Habana drivers
@@ -35,17 +33,15 @@ ARG OS_STRING
 ARG PT_VERSION
 ARG PYPI_INDEX_URL
 ARG HABANA_RPM_REPO_PATH
-ARG TORCH_TYPE
 
-# Labels for RHEL certification
+# Labels for RHEL certification.
 # Note: when SYNAPSE_REVISION=latest, this metadata intentionally records "latest"
 # (the requested input), not the detected numeric revision.
 LABEL vendor="Habanalabs Ltd." \
     release="${SYNAPSE_VERSION}-${SYNAPSE_REVISION}"
 
 # Environment variables - Habana-specific paths and configurations
-ENV TORCH_TYPE=${TORCH_TYPE} \
-    PT_VERSION=${PT_VERSION} \
+ENV PT_VERSION=${PT_VERSION} \
     OS_STRING="${OS_STRING}" \
     VLLM_TARGET_DEVICE="hpu" \
     GC_KERNEL_PATH=/usr/lib/habanalabs/libtpc_kernels.so \
@@ -58,18 +54,19 @@ COPY LICENSE /licenses/
 
 # System setup - Remove FIPS provider and add EPEL
 RUN dnf -y update && \
-    dnf install -y python3-dnf-plugin-versionlock && \
+    dnf install -y --allowerasing python3-dnf-plugin-versionlock && \
     dnf versionlock add redhat-release* && \
+    # '|| true' is added to support RHEL 9.4 in which openssl-fips-provider-so is not installed
     rpm -e --nodeps openssl-fips-provider-so || true && \
     dnf clean all
 
 # Install system dependencies
-RUN dnf install -y \
+RUN dnf install -y --allowerasing \
     wget git-core jq libomp \
     # Image processing dependencies (needed for pillow-simd -> habana-media-loader)
     zlib-devel libjpeg-turbo-devel \
     # habanalabs-thunk dependency - Centos CRB
-    # libfdt-devel 
+    #libfdt-devel \
     # Python development
     python3-devel python3.12 python3.12-devel python3.12-pip \
     # NUMA support - numactl-devel centos appstream
@@ -145,7 +142,6 @@ ARG PT_PACKAGE_NAME_NON_DEFAULT_PYTHON_SUBSTRING
 ARG PYPI_INDEX_URL
 ARG SYNAPSE_VERSION
 ARG SYNAPSE_REVISION
-ARG TORCH_TYPE
 
 # Environment variables inherited from base, OS_STRING needed for PyTorch install
 ENV OS_STRING="${OS_STRING}"
@@ -160,17 +156,21 @@ RUN SYNAPSE_REVISION_RUNTIME=$(cat /etc/habanalabs/synapse_revision) && \
     cd "${TMP_PATH}" && \
     export SKIP_INSTALL_DEPENDENCIES=1 && \
     export PIP_NO_CACHE_DIR=1 && \
-    PYTHON_INDEX_URL="--extra-index-url ${PYPI_INDEX_URL}" ./install.sh $SYNAPSE_VERSION $SYNAPSE_REVISION_RUNTIME $TORCH_TYPE && \
+    PYTHON_INDEX_URL="--extra-index-url ${PYPI_INDEX_URL}" ./install.sh $SYNAPSE_VERSION $SYNAPSE_REVISION_RUNTIME upstream && \
     cd / && \
     rm -rf "${TMP_PATH}" "${PT_PACKAGE_NAME}" && \
     dnf clean all
+
+# Install torchaudio (CPU-only, matching PT version)
+RUN pip install --no-cache-dir --no-deps --extra-index-url https://download.pytorch.org/whl/cpu \
+    torchaudio==${PT_VERSION}
 
 WORKDIR /workspace
 
 # ============================================================================
 # Stage 3: vllm-final - Install vLLM and configure runtime
 # ============================================================================
-FROM gaudi-pytorch as vllm-openai
+FROM gaudi-pytorch AS vllm-openai
 
 # Re-declare global ARGs needed in this stage
 ARG VLLM_GAUDI_COMMIT
@@ -184,11 +184,12 @@ ENV BASE_NAME=${BASE_NAME} \
     VLLM_PATH2=/workspace/vllm-gaudi
 
 # Install additional system dependencies
-RUN dnf install -y gettext --allowerasing && \
+RUN dnf install -y gettext patch --allowerasing && \
     dnf clean all && \
     ln -sf /usr/bin/python3 /usr/bin/python
 
 WORKDIR /root
+COPY CVE-2026-27893.patch .
 
 # Clone and install vLLM
 RUN set -e && \
@@ -208,28 +209,15 @@ RUN set -e && \
     git remote add upstream https://github.com/vllm-project/vllm.git && \
     git fetch upstream --tags && \
     git checkout ${VLLM_PROJECT_COMMIT} && \
-    #python use_existing_torch.py && \
     pip install --no-cache-dir -r <(sed '/^torch/d' requirements/build.txt) && \
     VLLM_TARGET_DEVICE=empty pip install --no-cache-dir --no-build-isolation . && \
     cd $VLLM_PATH2 && \
     git checkout ${VLLM_GAUDI_COMMIT} && \
     VLLM_TARGET_DEVICE=hpu pip install --no-cache-dir -v . --no-build-isolation && \
+    cd /usr/local/lib/python3.12/site-packages/vllm && \
+    patch -p2 < /root/CVE-2026-27893.patch && \
+    rm -f /root/CVE-2026-27893.patch && \
     pip check
-
-# The scripts below are used for benchmarks testing and autocalc:
-# RUN pip3 install -v -e $VLLM_PATH/tests/vllm_test_utils
-##Install additional Python packages
-#RUN pip3 install datasets pandas
-#
-## Copy utility scripts and configuration
-#RUN mkdir -p /root/scripts/
-#COPY .cd/templates /root/scripts/templates/
-#COPY .cd/entrypoints /root/scripts/entrypoints/
-#COPY .cd/server /root/scripts/server/
-#COPY .cd/benchmark /root/scripts/benchmark/
-#WORKDIR /root/scripts
-# Set testing entrypoint script
-#ENTRYPOINT ["python3", "-m", "entrypoints.entrypoint_main"]
 
 # Setup non-root user for OpenShift compatibility
 RUN umask 002 && \
@@ -251,3 +239,4 @@ LABEL name="rhoai/odh-vllm-gaudi-rhel9" \
       summary="GPU-accelerated vLLM build using Intel Gaudi (Habana) for high-performance inference." \
       com.redhat.license_terms="https://www.redhat.com/licenses/Red_Hat_Standard_EULA_20191108.pdf" \
       vendor="Red Hat, Inc."
+

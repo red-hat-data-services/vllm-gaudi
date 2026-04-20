@@ -45,6 +45,7 @@ class HpuPlatform(Platform):
         cls,
         selected_backend: "AttentionBackendEnum",
         attn_selector_config: "AttentionSelectorConfig",
+        num_heads: Optional[int] = None,
     ) -> str:
         if attn_selector_config.use_sparse:
             raise NotImplementedError("Sparse Attention is not supported on HPU.")
@@ -65,19 +66,6 @@ class HpuPlatform(Platform):
             logger.info("Using HPUAttentionV1 backend.")
             return ("vllm_gaudi.v1.attention.backends."
                     "hpu_attn.HPUAttentionBackendV1")
-
-    @classmethod
-    def validate_request(
-        cls,
-        prompt,
-        params,
-        processed_inputs,
-    ) -> None:
-        from vllm.sampling_params import SamplingParams
-        if isinstance(params, SamplingParams) and (params.logprobs is not None or params.prompt_logprobs is not None):
-            raise ValueError("Gaudi doesn't support logprobs. Please remove "
-                             "'logprobs'/'top_logprobs' from your request to "
-                             "receive a response.")
 
     @classmethod
     def is_async_output_supported(cls, enforce_eager: Optional[bool]) -> bool:
@@ -155,6 +143,11 @@ class HpuPlatform(Platform):
         if get_config().VLLM_CONTIGUOUS_PA and not get_config().unified_attn:
             logger.warning("Using Contiguous PA, disabling prefix caching")
             vllm_config.cache_config.enable_prefix_caching = False
+
+        if (vllm_config.cache_config.enable_prefix_caching and vllm_config.cache_config.mamba_cache_mode == "all"):
+            vllm_config.cache_config.mamba_cache_mode = "align"
+            logger.info("[HPU] Overriding mamba_cache_mode from 'all' to 'align' "
+                        "to ensure block-aligned chunked prefill splits.")
 
         if compilation_config.mode != CompilationMode.NONE:
             logger.info("[HPU] Forcing CompilationMode.NONE "

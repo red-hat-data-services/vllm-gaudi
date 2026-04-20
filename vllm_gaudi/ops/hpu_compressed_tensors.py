@@ -29,7 +29,10 @@ from vllm.model_executor.layers.quantization.compressed_tensors.schemes.compress
 from vllm.model_executor.layers.quantization.compressed_tensors.utils import (find_matched_target)
 from vllm.model_executor.layers.quantization.compressed_tensors.compressed_tensors_moe import (  # noqa: E501
     CompressedTensorsW8A8Fp8MoEMethod, CompressedTensorsWNA16MarlinMoEMethod)
-from vllm.model_executor.layers.quantization.kernels.mixed_precision import (MPLinearKernel, MPLinearLayerConfig)
+from vllm.model_executor.kernels.linear.mixed_precision import (
+    MPLinearKernel,
+    MPLinearLayerConfig,
+)
 from vllm.model_executor.layers.quantization.utils.quant_utils import (pack_quantized_values_into_int32,
                                                                        unpack_quantized_values_into_int32, GroupShape)
 from vllm.model_executor.layers.quantization.utils.fp8_utils import validate_fp8_block_shape
@@ -42,6 +45,7 @@ from vllm_gaudi.extension.scales import ConvertScaleToHwAligned
 from vllm_gaudi.extension.ops import (VllmMixtureOfExpertsOpFP8, VllmMixtureOfExpertsOpFP8PerChannel,
                                       VllmMixtureOfExpertsOpWNA16)
 from vllm_gaudi.extension.runtime import get_config
+from vllm_gaudi.ops.hpu_fused_moe import _normalize_moe_activation
 from vllm.model_executor.layers.quantization.base_config import (
     QuantizeMethodBase, )
 import vllm.model_executor.model_loader.weight_utils as vllm_weight_utils
@@ -401,7 +405,7 @@ class HPUCompressedTensorsW8A8Fp8MoEMethod(CompressedTensorsW8A8Fp8MoEMethod):
             topk_ids.to(torch.int64),
             topk_weights.to(x.dtype),
             permuted_weights=True,
-            activation=layer.activation,
+            activation=_normalize_moe_activation(layer.activation),
         )
         return output.view(*input_shape)
 
@@ -812,7 +816,7 @@ class HPUCompressedTensorsWNA16MoEMethod(CompressedTensorsWNA16MarlinMoEMethod):
             topk_ids.to(torch.int64),
             topk_weights.to(x.dtype),
             permuted_weights=False,
-            activation=layer.activation,
+            activation=_normalize_moe_activation(layer.activation),
         )
         return output.view(*input_shape)
 
