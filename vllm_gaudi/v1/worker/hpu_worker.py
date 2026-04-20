@@ -149,6 +149,9 @@ class HPUWorker(WorkerBase):
     def get_kv_cache_spec(self) -> dict[str, KVCacheSpec]:
         return self.model_runner.get_kv_cache_spec()
 
+    def reset_encoder_cache(self) -> None:
+        self.model_runner.reset_encoder_cache()
+
     def get_model(self) -> nn.Module:
         return self.model_runner.get_model()
 
@@ -254,8 +257,12 @@ class HPUWorker(WorkerBase):
         # recipes we will use the extra memory for graphs/blocks
         free_hpu_memory = torch.hpu.mem_get_info()[0]
 
-        graph_reserved_mem = (float(os.environ.get('VLLM_GRAPH_RESERVED_MEM', '0.1'))
-                              if not self.model_config.enforce_eager else 0)
+        try:
+            graph_reserved_mem = (float(os.environ.get('VLLM_GRAPH_RESERVED_MEM', '0.1'))
+                                  if not self.model_config.enforce_eager else 0)
+        except ValueError:
+            graph_reserved_mem = 0.0 if self.model_config.enforce_eager else 0.1
+            logger.warning("Invalid VLLM_GRAPH_RESERVED_MEM value, using default %s", graph_reserved_mem)
         graph_headroom = 1 - graph_reserved_mem
         available_hpu_memory = free_hpu_memory * \
             self.cache_config.gpu_memory_utilization
@@ -303,24 +310,27 @@ class HPUWorker(WorkerBase):
             self.kv_cache_config = kv_cache_config
             self.model_runner.initialize_kv_cache(kv_cache_config)
             torch.hpu.synchronize()
-        msg = (f"Usable num_blocks: {kv_cache_config.num_blocks}, "
-               f"actual allocated num_blocks: "
-               f"{self.model_runner.kv_caches[0][0].shape[0]} "
-               f"(_PAD_BLOCK_ID={self.model_runner._PAD_BLOCK_ID}, "
-               f"_PAD_SLOT_ID={self.model_runner._PAD_SLOT_ID})")
-        logger.info(msg)
+        if len(self.model_runner.kv_caches) > 0:
+            msg = (f"Usable num_blocks: {kv_cache_config.num_blocks}, "
+                   f"actual allocated num_blocks: "
+                   f"{self.model_runner.kv_caches[0][0].shape[0]} "
+                   f"(_PAD_BLOCK_ID={self.model_runner._PAD_BLOCK_ID}, "
+                   f"_PAD_SLOT_ID={self.model_runner._PAD_SLOT_ID})")
+            logger.info(msg)
         msg = ("Initializing cache engine "
                f"took {m.get_summary_string()}")
         logger.info(msg)
         self.compile_or_warm_up_model()
 
-    def compile_or_warm_up_model(self) -> None:
+    def compile_or_warm_up_model(self) -> float:
         # Don't run the warmup if the model is already warmed up
         if not getattr(self.model_runner, 'graphed_buckets', None):
             self.model_runner.warmup_model()
         # Reset the seed to ensure that the random state is not affected by
         # the model initialization and profiling.
         set_random_seed(self.model_config.seed)
+
+        return self.vllm_config.compilation_config.compilation_time
 
     def sample_tokens(self, grammar_output: "GrammarOutput|None") -> ModelRunnerOutput | AsyncModelRunnerOutput:
         return self.model_runner.sample_tokens(grammar_output)

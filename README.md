@@ -14,13 +14,17 @@ vLLM Hardware Plugin for Intel® Gaudi®
 
 ---
 *Latest News* 🔥
+- [2026/03] Version 0.17.1 is now available, built on [vLLM 0.17.1](https://github.com/vllm-project/vllm/releases/tag/v0.17.1) and fully compatible with [Intel® Gaudi® v1.23.0](https://docs.habana.ai/en/v1.23.0/Release_Notes/GAUDI_Release_Notes.html).
+
+  This release adds validated support for Ernie4.5-VL, GPT-OSS (20B/120B), and reranking models, introduces MxFP4 weight loading and dequantization, and delivers major Mamba/Granite 4.0-h improvements including prefix caching, custom depthwise conv1d TPC kernels, and precision enhancements. It also introduces, RowParallel NIC chunking, logprobs output, and Granite tool calling accuracy improvements.
+
 - [2026/03] Version 0.16.0 is now available, built on [vLLM 0.16.0](https://github.com/vllm-project/vllm/releases/tag/v0.16.0) and fully compatible with [Intel® Gaudi® v1.23.0](https://docs.habana.ai/en/v1.23.0/Release_Notes/GAUDI_Release_Notes.html).
 
   This release introduces validated support and critical stability fixes for Qwen3-VL models leveraging HPUMMEncoderAttention. Performance and stability were improved through backported Mamba architecture optimizations, Docker and UBI infrastructure enhancements, and a forced CPU loading mechanism for INC quantization to prevent OOM errors.
 
 - [2026/02] Version 0.15.1 is now available, built on [vLLM 0.15.1](https://github.com/vllm-project/vllm/releases/tag/v0.15.1) and fully compatible with [Intel® Gaudi® v1.23.0](https://docs.habana.ai/en/v1.23.0/Release_Notes/GAUDI_Release_Notes.html).
 
-  This release introduces validated support for Granite 4.0-h and Qwen3-VL (dense and MoE variants) on Intel Gaudi 3, alongside significant Llama 4 stability fixes. It also features major prefill performance improvements via full chunked prefill attention, FlashAttention online merge, b2b matmul operations, and KV cache sharing. Additionally, this version adds HPU ops for Mamba/SSM architectures to enable hybrid models, and introduces new support for  ModelOpt FP8 quantization.
+  This release introduces validated support for Granite 4.0-h and Qwen3-VL (dense and MoE variants) on Intel Gaudi 3, alongside significant Llama 4 stability fixes. It also features major prefill performance improvements via full chunked prefill attention, FlashAttention online merge, b2b matmul operations, and KV cache sharing. Additionally, this version adds HPU ops for Mamba/SSM architectures to enable hybrid models, and introduces new support for ModelOpt FP8 quantization.
 
 - [2026/02] Version 0.14.1 is now available, built on [vLLM 0.14.1](https://github.com/vllm-project/vllm/releases/tag/v0.14.1) and fully compatible with [Intel® Gaudi® v1.23.0](https://docs.habana.ai/en/v1.23.0/Release_Notes/GAUDI_Release_Notes.html). It introduces support for Granite 4.0h and Qwen 3 VL models.
 

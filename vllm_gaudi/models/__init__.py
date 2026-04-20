@@ -11,8 +11,13 @@ def register_model():
     ModelRegistry.register_model("Qwen2_5_VLForConditionalGeneration",
                                  "vllm_gaudi.models.qwen2_5_vl:HpuQwen2_5_VLForConditionalGeneration")
 
+    from vllm_gaudi.models.ernie45_vl import HpuErnie4_5_VLMoeForConditionalGeneration  # noqa: F401
+    ModelRegistry.register_model("Ernie4_5_VLMoeForConditionalGeneration",
+                                 "vllm_gaudi.models.ernie45_vl:HpuErnie4_5_VLMoeForConditionalGeneration")
+
     from vllm_gaudi.models.ovis import HpuOvis  # noqa: F401
     ModelRegistry.register_model("Ovis", "vllm_gaudi.models.ovis:HpuOvis")
+
     from vllm_gaudi.models.qwen3_vl_moe import HpuQwen3_VLMoeForConditionalGeneration  # noqa: F401
     ModelRegistry.register_model("Qwen3VLMoeForConditionalGeneration",
                                  "vllm_gaudi.models.qwen3_vl_moe:HpuQwen3_VLMoeForConditionalGeneration")
@@ -40,3 +45,5 @@ def register_model():
 
     from vllm_gaudi.models.deepseek_ocr import HpuDeepseekOCRForCausalLM  # noqa: F401
     ModelRegistry.register_model("DeepseekOCRForCausalLM", "vllm_gaudi.models.deepseek_ocr:HpuDeepseekOCRForCausalLM")
+
+    import vllm_gaudi.models.gptoss_mxfp4  # noqa: F401
