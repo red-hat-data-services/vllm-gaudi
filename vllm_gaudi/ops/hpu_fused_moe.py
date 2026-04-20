@@ -1,7 +1,10 @@
 from collections.abc import Callable
+from enum import Enum
 from functools import partial
 from typing import Union
 
+from vllm.model_executor.layers.fused_moe.runner.default_moe_runner import (
+    DefaultMoERunner, )
 import torch
 import vllm
 import vllm.envs as envs
@@ -24,8 +27,13 @@ from vllm.model_executor.layers.fused_moe.router.routing_simulator_router import
     RoutingSimulatorRouter, )
 from vllm_gaudi.extension.ops import (VllmMixtureOfExpertsOp)
 from vllm_gaudi.extension.runtime import get_config
+from vllm.model_executor.utils import set_weight_attrs
 from vllm_gaudi.utils import has_quant_config
 from vllm_gaudi.v1.worker.hpu_dp_utils import dispatch_hidden_states, dispatch_tensor, get_hpu_dp_metadata
+
+
+def _normalize_moe_activation(activation):
+    return activation.value if isinstance(activation, Enum) else activation
 
 
 @UnquantizedFusedMoEMethod.register_oot
@@ -38,9 +46,13 @@ class HPUUnquantizedFusedMoEMethod(UnquantizedFusedMoEMethod):
         torch.hpu.synchronize()
         vllm_config = get_current_vllm_config()
         self.model_type = None
+        self.is_mxfp4 = False
         if vllm_config is not None and vllm_config.model_config is not None \
             and vllm_config.model_config.hf_config is not None:
             self.model_type = vllm_config.model_config.hf_config.model_type
+            if hasattr(vllm_config.model_config.hf_config, "quantization_config") and \
+               vllm_config.model_config.hf_config.quantization_config is not None:
+                self.is_mxfp4 = vllm_config.model_config.hf_config.quantization_config.get("quant_method") == "mxfp4"
 
     def _select_monolithic(self) -> Callable:
         """Overriding base method"""
@@ -59,8 +71,8 @@ class HPUUnquantizedFusedMoEMethod(UnquantizedFusedMoEMethod):
 
         experts_min, experts_max = ep_shift, num_experts + ep_shift - 1
 
-        if layer.dp_size > 1 and self.use_dispatch_fn:
-            dispatch_fn = partial(dispatch_hidden_states, is_sequence_parallel=layer.is_sequence_parallel)
+        if layer.moe_config.dp_size > 1 and self.use_dispatch_fn:
+            dispatch_fn = partial(dispatch_hidden_states, is_sequence_parallel=layer.moe_config.is_sequence_parallel)
         else:
             dispatch_fn = None
 
@@ -91,6 +103,43 @@ class HPUUnquantizedFusedMoEMethod(UnquantizedFusedMoEMethod):
         if cache_weight_lists and hasattr(layer.moe_op, "_cache_weight_lists"):
             layer.moe_op._cache_weight_lists()
 
+    def create_weights(self, layer: torch.nn.Module, num_experts: int, hidden_size: int,
+                       intermediate_size_per_partition: int, params_dtype: torch.dtype, **extra_weight_attrs):
+
+        if self.model_type in ["gpt_oss"] and self.is_mxfp4:
+            from vllm.utils.math_utils import round_up
+            # Fused gate_up_proj (column parallel)
+            w13_weight = torch.nn.Parameter(torch.zeros(num_experts,
+                                                        2 * round_up(intermediate_size_per_partition, 32),
+                                                        hidden_size,
+                                                        dtype=params_dtype),
+                                            requires_grad=False)
+            layer.register_parameter("w13_weight", w13_weight)
+            set_weight_attrs(w13_weight, extra_weight_attrs)
+
+            w13_bias = torch.nn.Parameter(torch.zeros(num_experts,
+                                                      2 * round_up(intermediate_size_per_partition, 32),
+                                                      dtype=params_dtype),
+                                          requires_grad=False)
+            layer.register_parameter("w13_bias", w13_bias)
+            set_weight_attrs(w13_bias, extra_weight_attrs)
+
+            # down_proj (row parallel)
+            w2_weight = torch.nn.Parameter(torch.zeros(num_experts,
+                                                       hidden_size,
+                                                       round_up(intermediate_size_per_partition, 32),
+                                                       dtype=params_dtype),
+                                           requires_grad=False)
+            layer.register_parameter("w2_weight", w2_weight)
+            set_weight_attrs(w2_weight, extra_weight_attrs)
+
+            w2_bias = torch.nn.Parameter(torch.zeros(num_experts, hidden_size, dtype=params_dtype), requires_grad=False)
+            layer.register_parameter("w2_bias", w2_bias)
+            set_weight_attrs(w2_bias, extra_weight_attrs)
+        else:
+            super().create_weights(layer, num_experts, hidden_size, intermediate_size_per_partition, params_dtype,
+                                   **extra_weight_attrs)
+
     def apply_monolithic(
         self,
         layer: FusedMoE,
@@ -117,7 +166,7 @@ class HPUUnquantizedFusedMoEMethod(UnquantizedFusedMoEMethod):
             topk_ids = topk_ids.to(torch.int64)
             topk_weights = topk_weights.to(x.dtype)
 
-        if layer.dp_size > 1:
+        if layer.moe_config.dp_size > 1:
             dp_metadata = get_hpu_dp_metadata()
             if not (has_quant_config(layer.vllm_config.model_config) and self.use_dispatch_fn):
                 hidden_states_across_dp = dp_metadata.hidden_states_across_dp if dp_metadata is not None else None
@@ -137,9 +186,9 @@ class HPUUnquantizedFusedMoEMethod(UnquantizedFusedMoEMethod):
             topk_ids,
             topk_weights,
             permuted_weights=True,
-            activation=layer.activation,
+            activation=_normalize_moe_activation(layer.activation),
         )
-        if layer.dp_size > 1:
+        if layer.moe_config.dp_size > 1:
             return output.view(*(output.size(0), *input_shape[1:]))
         else:
             return output.view(*input_shape)
@@ -170,7 +219,7 @@ class HPUUnquantizedFusedMoEMethod(UnquantizedFusedMoEMethod):
             topk_ids = topk_ids.to(torch.int64)
             topk_weights = topk_weights.to(x.dtype)
 
-        if layer.dp_size > 1:
+        if layer.moe_config.dp_size > 1:
             dp_metadata = get_hpu_dp_metadata()
             if not (has_quant_config(layer.vllm_config.model_config) and self.use_dispatch_fn):
                 hidden_states_across_dp = dp_metadata.hidden_states_across_dp if dp_metadata is not None else None
@@ -191,7 +240,7 @@ class HPUUnquantizedFusedMoEMethod(UnquantizedFusedMoEMethod):
                 topk_ids.to(torch.int64),
                 topk_weights.to(x.dtype),
                 permuted_weights=True,
-                activation=layer.activation,
+                activation=_normalize_moe_activation(layer.activation),
             ).view(*input_shape)
 
         output = layer.moe_op(
@@ -199,17 +248,17 @@ class HPUUnquantizedFusedMoEMethod(UnquantizedFusedMoEMethod):
             topk_ids,
             topk_weights,
             permuted_weights=True,
-            activation=layer.activation,
+            activation=_normalize_moe_activation(layer.activation),
         )
-        if layer.dp_size > 1:
+        if layer.moe_config.dp_size > 1:
             return output.view(*(output.size(0), *input_shape[1:]))
         else:
             return output.view(*input_shape)
 
 
 def reduce_output(self, states: torch.Tensor) -> torch.Tensor:
-    if (not self.is_sequence_parallel and not self.use_dp_chunking and self.reduce_results
-            and (self.tp_size > 1 or self.ep_size > 1)):
+    if (not self.moe_config.is_sequence_parallel and not self.use_dp_chunking and self.reduce_results
+            and (self.moe_config.tp_size > 1 or self.moe_config.ep_size > 1)):
         states = self.maybe_all_reduce_tensor_model_parallel(states)
     return states
 
@@ -223,29 +272,33 @@ def patched_fused_moe_forward(
     Patched forward method that bypasses the custom op to avoid recompilation issues.
     """
     og_hidden_states = hidden_states.shape[-1]
-    if self.hidden_size != og_hidden_states:
+    original_hidden_states = hidden_states
+    if self.moe_config.hidden_dim != og_hidden_states:
         hidden_states = torch.nn.functional.pad(hidden_states, (0, self.hidden_size - og_hidden_states),
                                                 mode='constant',
                                                 value=0.0)
 
-    use_direct_implementation = self.dp_size == 1
+    use_direct_implementation = self.moe_config.dp_size == 1
     if self.shared_experts is None:
         if use_direct_implementation:
-            fused_output = self.forward_impl(hidden_states, router_logits)
+            fused_output = self.layer.runner.forward_impl(self.layer, hidden_states, router_logits,
+                                                          original_hidden_states)
             assert not isinstance(fused_output, tuple)
             return reduce_output(self, fused_output)[..., :og_hidden_states]
         else:
-            fused_output = torch.ops.vllm.moe_forward(hidden_states, router_logits, self.layer_name)
+            fused_output = torch.ops.vllm.moe_forward(hidden_states, router_logits, original_hidden_states,
+                                                      self.layer_name)
 
         return fused_output[..., :og_hidden_states]
     else:
         if use_direct_implementation:
-            shared_output, fused_output = self.forward_impl(hidden_states, router_logits)
-            return (reduce_output(self, shared_output)[..., :og_hidden_states],
-                    reduce_output(self, fused_output)[..., :og_hidden_states])
+            shared_output, fused_output = self.layer.runner.forward_impl(self.layer, hidden_states, router_logits,
+                                                                         original_hidden_states)
+            reduce_output(self, shared_output)[..., :og_hidden_states],
+            reduce_output(self, fused_output)[..., :og_hidden_states],
         else:
             shared_output, fused_output = torch.ops.vllm.moe_forward_shared(hidden_states, router_logits,
-                                                                            self.layer_name)
+                                                                            original_hidden_states, self.layer_name)
         return (shared_output[..., :og_hidden_states], fused_output[..., :og_hidden_states])
 
 
@@ -407,7 +460,18 @@ def create_fused_moe_router(
 
 
 # Apply patches
-FusedMoE.forward = patched_fused_moe_forward
+# Ensure DefaultMoERunner keeps a reference to its layer for defensive redirects.
+_orig_default_moe_runner_init = DefaultMoERunner.__init__
+
+
+def _patched_default_moe_runner_init(self, layer, *args, **kwargs):
+    self.layer = layer
+    return _orig_default_moe_runner_init(self, layer, *args, **kwargs)
+
+
+DefaultMoERunner.__init__ = _patched_default_moe_runner_init
+
+DefaultMoERunner.forward = patched_fused_moe_forward
 vllm.model_executor.layers.fused_moe.layer.get_compressed_expert_map = \
     get_compressed_expert_map
 vllm.model_executor.layers.fused_moe.router.router_factory.create_fused_moe_router = \

@@ -64,13 +64,18 @@ class HPUBucketingManager():
         self.block_size = block_size
         self.max_num_batched_tokens = max_num_batched_tokens
         self.num_hpu_blocks = None
+        self._fallback_max_ctx = 0
         self.max_model_len = max_model_len
         self.num_speculative_tokens = num_speculative_tokens
         self.mamba_chunk_size = mamba_chunk_size
         self.initialized = True
         self.fallback_bs_base_step = 2
-        self.fallback_seq_base_step = 32
+        self.fallback_seq_base_step = max(32, mamba_chunk_size)
         self.fallback_blocks_base_step = 32
+
+        if mamba_chunk_size > 0 and self.max_num_batched_tokens % mamba_chunk_size != 0:
+            raise ValueError(f"max_num_batched_tokens ({self.max_num_batched_tokens}) must be "
+                             f"divisible by mamba_chunk_size ({mamba_chunk_size})")
 
         self.use_sliding_window = get_config().PT_HPU_SDPA_QKV_SLICE_MODE_FWD
         if self.use_sliding_window:
@@ -208,6 +213,11 @@ class HPUBucketingManager():
                 self.seed_decode_buckets = self.decode_buckets
                 # More buckets are added automatically for spec decode
                 self.decode_buckets = self.generate_spec_decode_buckets(self.decode_buckets)
+            # Safety cap for fallback: max ctx from ALL prepared decode buckets
+            # (including spec decode expansions).  Prevents catastrophic
+            # allocations from corrupt batch data while allowing
+            # calc_fallback_value to handle moderate overflow.
+            self._fallback_max_ctx = max((ctx for _, _, ctx in self.decode_buckets), default=0)
 
             self.log_generate_info(False)
         else:
@@ -238,7 +248,13 @@ class HPUBucketingManager():
         if self.num_hpu_blocks is None:
             new_ctx = 0
         else:
-            new_ctx = min(calc_fallback_value(ctx, self.fallback_blocks_base_step), self.num_hpu_blocks)
+            new_ctx = calc_fallback_value(ctx, self.fallback_blocks_base_step)
+            # Safety cap: limit to max prepared decode bucket ctx to prevent
+            # catastrophic graph compilation from corrupted batch data.
+            if self._fallback_max_ctx > 0 and new_ctx > self._fallback_max_ctx:
+                logger().warning(f"Fallback ctx {new_ctx} exceeds max prepared "
+                                 f"decode bucket ctx {self._fallback_max_ctx}, capping.")
+                new_ctx = self._fallback_max_ctx
         return (new_batch_size, new_seq_len, new_ctx)
 
     def find_prompt_bucket(self, batch_size, seq_len, ctx=0):

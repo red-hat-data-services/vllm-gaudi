@@ -4,7 +4,8 @@
 ###############################################################################
 
 set -e
-cd "$(dirname "$0")"
+pushd "$(dirname "$0")" > /dev/null
+trap 'popd > /dev/null' EXIT
 
 ALLOWED_DEVICES=("g2" "g3")
 
@@ -45,6 +46,8 @@ create_measure_config() {
         tmp_config="{\"method\": \"HOOKS\",\"mode\": \"MEASURE\",\"observer\": \"maxabs\",\"allowlist\": {\"types\": [], \"names\":  []},\"blocklist\": {\"types\": [], \"names\":  [\"self_attn\", \"lm_head\"]},\"quantize_weight\": false,\"dump_stats_path\": \"$1/$2/$3/inc_output\",\"calibration_sample_interval\": 1}"
     elif [[ $model_name_lower =~ ^deepseek ]]; then
         tmp_config="{\"method\": \"HOOKS\",\"mode\": \"MEASURE\",\"observer\": \"maxabs\",\"allowlist\": {\"types\": [], \"names\":  []},\"blocklist\": {\"types\": [], \"names\":  [\"lm_head\", \"mlp\\\.gate\\\b\"]},\"quantize_weight\": false,\"dump_stats_path\": \"$1/$2/$3/inc_output\",\"calibration_sample_interval\": 1}"
+    elif [[ $model_name_lower =~ ^granite-4 ]]; then
+        tmp_config="{\"method\": \"HOOKS\",\"mode\": \"MEASURE\",\"observer\": \"maxabs\",\"allowlist\": {\"types\": [], \"names\":  []},\"blocklist\": {\"types\": [], \"names\":  [\"mamba\", \"self_attn\"]},\"quantize_weight\": false,\"dump_stats_path\": \"$1/$2/$3/inc_output\",\"calibration_sample_interval\": 1}"
     else
         tmp_config="{\"method\": \"HOOKS\",\"mode\": \"MEASURE\",\"observer\": \"maxabs\",\"allowlist\": {\"types\": [], \"names\":  []},\"blocklist\": {\"types\": [], \"names\":  []},\"quantize_weight\": false,\"dump_stats_path\": \"$1/$2/$3/inc_output\",\"calibration_sample_interval\": 1}"
     fi
@@ -65,6 +68,8 @@ create_quant_config() {
         fi
     elif [[ $model_name_lower =~ ^deepseek ]]; then
         tmp_config="{\"mode\": \"QUANTIZE\",\"observer\": \"maxabs\",\"scale_method\": \"maxabs_hw\", \"scale_format\": \"scalar\", \"allowlist\": {\"types\": [],\"names\": []},\"blocklist\": {\"types\": [],\"names\": [\"lm_head\", \"mlp\\\.gate\\\b\"]},\"dump_stats_path\": \"$1/$2/$3/inc_output\"}"
+    elif [[ $model_name_lower =~ ^granite-4 ]]; then
+        tmp_config="{\"mode\": \"QUANTIZE\",\"observer\": \"maxabs\",\"scale_method\": \"maxabs_hw\",\"allowlist\": {\"types\": [],\"names\": []},\"blocklist\": {\"types\": [],\"names\": [\"mamba\", \"self_attn\"]},\"dump_stats_path\": \"$1/$2/$3/inc_output\"}"
     else
         tmp_config="{\"mode\": \"QUANTIZE\",\"observer\": \"maxabs\",\"scale_method\": \"maxabs_hw\",\"allowlist\": {\"types\": [],\"names\": []},\"blocklist\": {\"types\": [],\"names\": []},\"dump_stats_path\": \"$1/$2/$3/inc_output\"}"
     fi
@@ -106,7 +111,7 @@ while getopts "m:b:l:t:d:h:o:r:ue" OPT; do
             BATCH_SIZE="$OPTARG"
             ;;
         o )
-            FP8_DIR=$(realpath "$OPTARG")
+            FP8_DIR=$(realpath -m "$OPTARG")
             ;;
         l )
             LIMIT="$OPTARG"
@@ -207,6 +212,11 @@ if  [[ "$model_name_lower" == *"deepseek"* ]]; then
     EXTRA_FLAGS_STEP_3+="--deepseek "
     EXTRA_ENVS_STEP_4="VLLM_HPU_FORCE_CHANNEL_FP8=0"
     EXTRA_FLAGS_STEP_4+="--block-quant --expert-parallel "
+elif [[ "$model_name_lower" == *"granite-4"* ]]; then
+    EXTRA_ENVS_STEP_2="VLLM_CONTIGUOUS_PA=false "
+    EXTRA_ENVS_STEP_4="VLLM_CONTIGUOUS_PA=false "
+    EXTRA_FLAGS_STEP_2+="--gpu-memory-utilization 0.1 "
+    EXTRA_FLAGS_STEP_4+="--max-model-len 2048 --gpu-memory-utilization 0.1 "
 fi
 
 # Skip step 1 if the DATASET_PATH_OR_NAME is a .pkl file

@@ -234,12 +234,36 @@ run_qwen2_5_vl_unified_attn_load_generate_test() {
     echo "✅ Test multimodal-support + unified attention with qwen2.5-vl-7b passed."
 }
 
+# Multimodal-support with qwen2.5-vl with warmup (small max model len and max num seqs) and lazy mode
+run_qwen2_5_vl_lazy_warmup_test() {
+    echo "➡️ Testing Qwen2.5-VL-7B with full warmup under tight limits and lazy mode..."
+    VLLM_SKIP_WARMUP=false VLLM_CONTIGUOUS_PA=False PT_HPU_LAZY_MODE=1 \
+    python -u "${VLLM_GAUDI_PREFIX}/tests/models/language/generation/generation_mm.py" --model-card-path "${VLLM_GAUDI_PREFIX}/tests/full_tests/model_cards/qwen2.5-vl-7b-small-ctx.yaml"
+    echo "✅ Test Qwen2.5-VL-7B with full restricted warmup and lazy mode passed."
+}
+
+# Multimodal-support with qwen2.5-vl with warmup (small max model len and max num seqs) and torch.compile
+run_qwen2_5_vl_compile_warmup_test() {
+    echo "➡️ Testing Qwen2.5-VL-7B with full warmup under tight limits and torch.compile..."
+    VLLM_SKIP_WARMUP=false VLLM_CONTIGUOUS_PAs=False PT_HPU_LAZY_MODE=0 \
+    python -u "${VLLM_GAUDI_PREFIX}/tests/models/language/generation/generation_mm.py" --model-card-path "${VLLM_GAUDI_PREFIX}/tests/full_tests/model_cards/qwen2.5-vl-7b-small-ctx.yaml"
+    echo "✅ Test Qwen2.5-VL-7B with full restricted warmup and torch.compile passed."
+}
+
 # Multimodal-support with qwen3-vl
 run_qwen3_vl_load_generate_test() {
     echo "➡️ Testing Qwen3-VL-32B..."
     VLLM_SKIP_WARMUP=true VLLM_CONTIGUOUS_PA=False PT_HPU_LAZY_MODE=0 \
     python -u "${VLLM_GAUDI_PREFIX}/tests/models/language/generation/generation_mm.py" --model-card-path "${VLLM_GAUDI_PREFIX}/tests/full_tests/model_cards/qwen3-vl-32b.yaml"
     echo "✅ Test with multimodal-support with qwen3-vl-32b passed."
+}
+
+# Multimodal-support with ernie4.5-vl
+run_ernie4.5_vl_test() {
+    echo "➡️ Testin gErnie4.5-VL-28B-A3B..."
+    VLLM_SKIP_WARMUP=true PT_HPU_LAZY_MODE=0 \
+    python -u "${VLLM_GAUDI_PREFIX}/tests/models/language/generation/generation_mm.py" --model-card-path "${VLLM_GAUDI_PREFIX}/tests/full_tests/model_cards/ernie4.5-vl-28b.yaml"
+    echo "✅ Test with multimodal-support with ernie4.5-vl-28b passed."
 }
 
 # Multimodal-support with mistral-small-3
@@ -272,25 +296,6 @@ run_llama3_70b_inc_dynamic_quant_test() {
 # If the score is below the threshold, the test will fail. For implementation details see:
 #   tests/models/language/generation/test_common.py
 
-# GSM8K on granite-4.0-h
-run_gsm8k_granite_4_test() {
-    echo "➡️ Testing GSM8K on granite-4-h..."
-    BATCH_SIZE=8 \
-    VLLM_EXPONENTIAL_BUCKETING=false \
-    VLLM_PROMPT_QUERY_BUCKET_MIN=256 \
-    VLLM_PROMPT_QUERY_BUCKET_MAX=4096 \
-    VLLM_PROMPT_QUERY_BUCKET_STEP=256 \
-    VLLM_DECODE_BS_BUCKET_MIN=16 \
-    VLLM_DECODE_BS_BUCKET_STEP=16 \
-    VLLM_DECODE_BS_BUCKET_MAX=16 \
-    VLLM_CONTIGUOUS_PA=true \
-    VLLM_SKIP_WARMUP=true \
-    ENABLE_APC=false \
-    ASYNC_SCHEDULING=true \
-    TP_SIZE=1 \
-    pytest -v -s "${VLLM_GAUDI_PREFIX}/tests/models/language/generation/test_common.py" --model_card_path "${VLLM_GAUDI_PREFIX}/tests/full_tests/model_cards/granite-4-h-small.yaml"
-    echo "✅ Test with granite-4-h passed."
-}
 
 # GSM8K on granite-8b
 run_gsm8k_granite_test() {
@@ -459,6 +464,10 @@ run_structured_output_test() {
     echo "✅ Test with structured outputs passed."
 }
 
+run_granite_4_h_shell_load_generate_test() {
+    python -u "${VLLM_GAUDI_PREFIX}/tests/full_tests/granite_4h_server_test.py"
+}
+
 # --- Utility Functions ---
 
 # Function to run all tests sequentially
@@ -490,9 +499,12 @@ launch_all_tests() {
     run_llama3_70b_inc_dynamic_quant_load_generate_test
     run_qwen2_5_vl_load_generate_test
     run_qwen2_5_vl_unified_attn_load_generate_test
+    run_qwen2_5_vl_lazy_warmup_test
+    run_qwen2_5_vl_compile_warmup_test
     run_qwen3_vl_load_generate_test
     run_mistral3_load_generate_test
     run_llama3_70b_inc_dynamic_quant_test
+    run_granite_4_h_shell_load_generate_test
     run_gsm8k_granite_test
     run_gsm8k_granite_test_unified_attn
     run_gsm8k_granite_async_test
