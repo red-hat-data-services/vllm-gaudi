@@ -36,10 +36,27 @@ def register_ops():
     import vllm_gaudi.ops.hpu_awq  # noqa: F401
     import vllm_gaudi.ops.hpu_conv  # noqa: F401
     import vllm_gaudi.ops.hpu_mm_encoder_attention  # noqa: F401
+    import vllm_gaudi.ops.hpu_weights  # noqa: F401
+
+    # Conditionally register HPURowParallelLinear only when chunking is enabled
+    from vllm_gaudi.ops.hpu_row_parallel_linear import register as register_row_parallel
+    register_row_parallel()
+
+    # Register HPU LoRA layers only when row parallel chunking is active
+    env_value = os.environ.get('VLLM_ROW_PARALLEL_CHUNKS', '1')
+    try:
+        row_parallel_chunks = int(env_value)
+    except ValueError:
+        row_parallel_chunks = 1
+    if row_parallel_chunks > 1:
+        from vllm_gaudi.lora.layers.hpu_row_parallel_linear import register_hpu_lora_layers
+        register_hpu_lora_layers()
 
 
 def register_models():
     import vllm_gaudi.models.utils  # noqa: F401
     import vllm_gaudi.models.interfaces  # noqa: F401
+    import vllm_gaudi.models.bert  # noqa: F401
+    import vllm_gaudi.models.roberta  # noqa: F401
     from .models import register_model
     register_model()

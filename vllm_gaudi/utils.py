@@ -11,6 +11,7 @@ import habana_frameworks.torch as htorch
 import numpy as np
 import numpy.typing as npt
 import math
+import json
 
 T = TypeVar("T")
 U = TypeVar("U")
@@ -286,5 +287,61 @@ class HPUCompileConfig:
         else:
             return {'backend': 'hpu_backend', 'fullgraph': self.fullgraph, 'dynamic': False}
 
+    def log_hpu_compile_config(self, model_name: str = "unknown") -> None:
+        """
+        Log HPU compilation configuration for TORCH_TRACE/tlparse analysis.
+        
+        This creates an artifact in the trace that shows the HPU-specific
+        compilation settings, making it easier to debug and compare different
+        compilation configurations.
+        
+        Args:
+            model_name: Name of the model being compiled
+        """
+        if not os.getenv("TORCH_TRACE"):
+            return
+        try:
+            from torch._logging._internal import trace_structured
+        except ImportError:
+            # torch._logging._internal not available, skip logging
+            return
+
+        compile_args = self.get_compile_args()
+
+        # Build configuration dict with HPU-specific details
+        config = {
+            "model": model_name,
+            "backend": compile_args.get("backend", "hpu_backend"),
+            "fullgraph": self.fullgraph,
+            "dynamic": self.dynamic,
+            "regional_compilation": self.regional_compilation,
+        }
+
+        # Add options if present
+        if "options" in compile_args:
+            config["options"] = compile_args["options"]
+
+        trace_structured("artifact",
+                         metadata_fn=lambda: {
+                             "name": "hpu_compilation_config",
+                             "encoding": "json",
+                         },
+                         payload_fn=lambda: json.dumps(config, indent=2))
+
 
 _async_sched_module.AsyncScheduler = HPUAsyncScheduler
+
+# Guard Prometheus counters against negative prompt-token counts that can arise
+# when KV-cache blocks are invalidated during OOM and token-count bookkeeping
+# becomes temporarily inconsistent.  Prometheus counters require non-negative
+# increments; clamping here prevents a crash in PrometheusStatLogger.record().
+import vllm.v1.metrics.stats as _stats_module  # noqa: E402
+
+_stats_get_by_source_orig = _stats_module.PromptTokenStats.get_by_source
+
+
+def _hpu_get_by_source(self, source: str) -> int:
+    return max(0, _stats_get_by_source_orig(self, source))
+
+
+_stats_module.PromptTokenStats.get_by_source = _hpu_get_by_source
