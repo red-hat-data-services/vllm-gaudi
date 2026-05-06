@@ -29,8 +29,6 @@ def _get_hw(_):
 
 
 def _get_prefix(_):
-    if os.environ.get('VLLM_UNIFIED_ATTN'):
-        return True
     conti_pa = os.environ.get('VLLM_CONTIGUOUS_PA')
     if conti_pa is None:
         return True
@@ -100,7 +98,7 @@ def VllmValue(name, env_var_type, depend=None):
     if depend is not None:
         return Value(name, env_var_type=env_var_type, dependencies=depend)
     global _VLLM_VALUES
-    return Value(name, lambda _: _VLLM_VALUES[name], env_var_type=env_var_type)
+    return Value(name, lambda _: _VLLM_VALUES.get(name), env_var_type=env_var_type)
 
 
 def get_environment():
