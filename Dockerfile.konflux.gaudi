@@ -3,21 +3,23 @@
 
 # Global build arguments - declared before first FROM to be available in all stages
 ARG ARTIFACTORY_URL="vault.habana.ai"
-ARG SYNAPSE_VERSION=1.23.0
+ARG SYNAPSE_VERSION=1.24.0
 # Use an exact revision (e.g. 695) or "latest" to auto-detect the newest available revision.
 # If you do not want metadata to show "latest", pass an exact SYNAPSE_REVISION.
-ARG SYNAPSE_REVISION=695
+ARG SYNAPSE_REVISION=1007
 ARG BASE_NAME=rhel9.6
 ARG OS_VERSION=9.6
 ARG OS_STRING=rhel96
-ARG PT_VERSION=2.9.0
+ARG PT_VERSION=2.10.0
 ARG PT_MODULES_REPO_NAME=gaudi-pt-modules
 # for internal use - to support a different package name for RHEL 9.4 with Python 3.12
 ARG PT_PACKAGE_NAME_NON_DEFAULT_PYTHON_SUBSTRING=
 ARG PYPI_INDEX_URL="https://pypi.org/simple/"
 ARG HABANA_RPM_REPO_PATH="rhel/9/${OS_VERSION}"
-ARG VLLM_GAUDI_COMMIT=v0.17.1
-ARG VLLM_PROJECT_COMMIT=v0.17.1
+ARG VLLM_GAUDI_COMMIT=v0.19.0
+ARG VLLM_PROJECT_COMMIT=v0.19.0
+ARG VLLM_REPO="https://github.com/vllm-project/vllm.git"
+ARG VLLM_GAUDI_REPO="https://github.com/vllm-project/vllm-gaudi.git"
 
 # ============================================================================
 # Stage 1: gaudi-base - Base system setup with Habana drivers
@@ -53,9 +55,9 @@ ENV PT_VERSION=${PT_VERSION} \
 COPY LICENSE /licenses/
 
 # System setup - Remove FIPS provider and add EPEL
-RUN dnf -y update && \
-    dnf install -y --allowerasing python3-dnf-plugin-versionlock && \
+RUN dnf install -y --allowerasing python3-dnf-plugin-versionlock && \
     dnf versionlock add redhat-release* && \
+    dnf -y update && \
     # '|| true' is added to support RHEL 9.4 in which openssl-fips-provider-so is not installed
     rpm -e --nodeps openssl-fips-provider-so || true && \
     dnf clean all
@@ -65,11 +67,11 @@ RUN dnf install -y --allowerasing \
     wget git-core jq libomp \
     # Image processing dependencies (needed for pillow-simd -> habana-media-loader)
     zlib-devel libjpeg-turbo-devel \
-    # habanalabs-thunk dependency - Centos CRB
+    # habanalabs-thunk dependency
     #libfdt-devel \
     # Python development
     python3-devel python3.12 python3.12-devel python3.12-pip \
-    # NUMA support - numactl-devel centos appstream
+    # NUMA support
     numactl-libs && \
     dnf clean all
 
@@ -162,7 +164,8 @@ RUN SYNAPSE_REVISION_RUNTIME=$(cat /etc/habanalabs/synapse_revision) && \
     dnf clean all
 
 # Install torchaudio (CPU-only, matching PT version)
-RUN pip install --no-cache-dir --no-deps --extra-index-url https://download.pytorch.org/whl/cpu \
+ARG EXTRA_INDEX_URL=https://download.pytorch.org/whl/cpu
+RUN pip install --no-cache-dir --no-deps --extra-index-url ${EXTRA_INDEX_URL} \
     torchaudio==${PT_VERSION}
 
 WORKDIR /workspace
@@ -173,6 +176,8 @@ WORKDIR /workspace
 FROM gaudi-pytorch AS vllm-openai
 
 # Re-declare global ARGs needed in this stage
+ARG VLLM_REPO
+ARG VLLM_GAUDI_REPO
 ARG VLLM_GAUDI_COMMIT
 ARG VLLM_PROJECT_COMMIT
 ARG BASE_NAME
@@ -184,17 +189,16 @@ ENV BASE_NAME=${BASE_NAME} \
     VLLM_PATH2=/workspace/vllm-gaudi
 
 # Install additional system dependencies
-RUN dnf install -y gettext patch --allowerasing && \
+RUN dnf install -y gettext --allowerasing && \
     dnf clean all && \
     ln -sf /usr/bin/python3 /usr/bin/python
 
 WORKDIR /root
-COPY CVE-2026-27893.patch .
 
 # Clone and install vLLM
 RUN set -e && \
     mkdir -p $VLLM_PATH2 && \
-    git clone https://github.com/vllm-project/vllm-gaudi.git $VLLM_PATH2 && \
+    git clone $VLLM_GAUDI_REPO $VLLM_PATH2 && \
     cd $VLLM_PATH2 && \
     if [ -z "${VLLM_PROJECT_COMMIT}" ]; then \
     VLLM_PROJECT_COMMIT=$(git show "origin/vllm/last-good-commit-for-vllm-gaudi:VLLM_STABLE_COMMIT" 2>/dev/null || { echo >&2 "Warning: Could not fetch last-good-commit, using main branch"; echo "main"; }) && \
@@ -204,9 +208,9 @@ RUN set -e && \
     fi && \
     mkdir -p $VLLM_PATH && \
     echo "Clone vllm-project/vllm and use configured or last good commit hash" && \
-    git clone https://github.com/vllm-project/vllm.git $VLLM_PATH && \
+    git clone $VLLM_REPO $VLLM_PATH && \
     cd $VLLM_PATH && \
-    git remote add upstream https://github.com/vllm-project/vllm.git && \
+    git remote add upstream $VLLM_REPO && \
     git fetch upstream --tags && \
     git checkout ${VLLM_PROJECT_COMMIT} && \
     pip install --no-cache-dir -r <(sed '/^torch/d' requirements/build.txt) && \
@@ -214,9 +218,6 @@ RUN set -e && \
     cd $VLLM_PATH2 && \
     git checkout ${VLLM_GAUDI_COMMIT} && \
     VLLM_TARGET_DEVICE=hpu pip install --no-cache-dir -v . --no-build-isolation && \
-    cd /usr/local/lib/python3.12/site-packages/vllm && \
-    patch -p2 < /root/CVE-2026-27893.patch && \
-    rm -f /root/CVE-2026-27893.patch && \
     pip check
 
 # Setup non-root user for OpenShift compatibility

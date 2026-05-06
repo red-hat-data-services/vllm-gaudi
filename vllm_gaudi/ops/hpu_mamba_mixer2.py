@@ -36,9 +36,9 @@ from vllm.model_executor.model_loader.weight_utils import (
 )
 from vllm.model_executor.utils import set_weight_attrs
 
-from vllm_gaudi.ops.causal_conv1d_pytorch import (
-    hpu_causal_conv1d_fn,
-    hpu_causal_conv1d_update,
+from vllm_gaudi.ops.granite_causal_conv1d import (
+    granite_causal_conv1d_fn,
+    granite_causal_conv1d_update,
 )
 from vllm_gaudi.ops.ssd_combined import hpu_mamba_chunk_scan_combined_varlen
 from vllm_gaudi.ops.ops_selector import get_selective_state_update_impl
@@ -368,7 +368,7 @@ class HPUMambaMixer2(MambaMixer2):
         assert self.cache_config is not None
         enable_prefix_caching = self.cache_config.enable_prefix_caching
         if attn_metadata is not None:
-            self_kv_cache = self.kv_cache[forward_context.virtual_engine]
+            self_kv_cache = self.kv_cache
             # conv_state = (..., dim, width-1) yet contiguous along 'dim'
             conv_state = self_kv_cache[0]
             ssm_state = self_kv_cache[1]
@@ -408,7 +408,7 @@ class HPUMambaMixer2(MambaMixer2):
             hidden_states_B_C = hidden_states_B_C * padding_mask_flat
             dt = dt * padding_mask_flat
 
-            hidden_states_B_C = hpu_causal_conv1d_fn(
+            hidden_states_B_C = granite_causal_conv1d_fn(
                 x,
                 self.conv_weights,
                 self.conv1d.bias,
@@ -463,7 +463,7 @@ class HPUMambaMixer2(MambaMixer2):
         # Process decode requests
         if has_decode:
             # 2. Convolution sequence transformation
-            hidden_states_B_C = hpu_causal_conv1d_update(
+            hidden_states_B_C = granite_causal_conv1d_update(
                 hidden_states_B_C,
                 conv_state,
                 self.conv_weights,
@@ -471,7 +471,6 @@ class HPUMambaMixer2(MambaMixer2):
                 self.activation,
                 load_cache_indices=load_indices_tensor,
                 store_cache_indices=store_indices_tensor,
-                initial_state_idx=None,
                 query_start_loc=query_start_loc_p,
             )
 
