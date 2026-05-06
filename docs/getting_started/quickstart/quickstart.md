@@ -23,7 +23,7 @@ Dockerfile, refer to the [Installation](../installation.md) guide.
 
 Before you start, ensure that your environment meets the following requirements:
 
-- Ubuntu 22.04 or 24.04
+- Ubuntu 22.04 or 24.04, Red Hat Enterprise Linux (RHEL) 9.4 or 9.6
 - Python 3.10
 - Intel® Gaudi® 2 or 3 AI accelerator
 - Intel® Gaudi® software version {{ VERSION }} or later
@@ -42,19 +42,28 @@ Follow these steps to run the vLLM server or launch benchmarks on Gaudi using Do
     git clone https://github.com/vllm-project/vllm-gaudi.git
     ```
 
-2. Navigate to the appropriate directory.
+2. Check out the version of `vllm-gaudi` that matches your target release.
 
     ```bash
-    cd vllm-gaudi/.cd/
+    cd vllm-gaudi
+    # Replace <TAG_OR_BRANCH> with the tag or branch for your desired release.
+    # You can find available versions at: https://github.com/vllm-project/vllm-gaudi/releases
+    git checkout <TAG_OR_BRANCH>
     ```
 
-3. Select your preferred values of the following variables.
+3. Navigate to the `.cd/` directory in the cloned `vllm-gaudi` repository. This directory contains the Docker Compose files and helper scripts used in this quickstart.
+
+    ```bash
+    cd .cd/
+    ```
+
+4. Select your preferred values of the following variables.
 
     | **Variable**   | **Description**                                                                                                                                                              |
     | -------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
     | `MODEL`        | Preferred large language model. For a list of the available models, see the next table.                                                                                      |
     | `HF_TOKEN`     | Hugging Face token generated from <https://huggingface.co>.                                                                                                                  |
-    | `DOCKER_IMAGE` | Docker image name or URL for the vLLM Gaudi container. When using the Gaudi repository, make sure to select Docker images with the *vllm-plugin* prefix in the file name. |
+    | `DOCKER_IMAGE` | Docker image name or URL for the vLLM Gaudi container. When using the Intel® Gaudi® vault (`vault.habana.ai/gaudi-docker`), select an image with the `vllm-` prefix. The naming convention is `vllm-<VLLM_VERSION>-pt<TYPE>-<PT_VERSION>`, where `<TYPE>` is either `upstream` (upstream PyTorch build, default) or `fork` (Intel® Gaudi® PyTorch fork build). For example: `vllm-{{ VLLM_VERSION }}-ptupstream-{{ PT_VERSION }}:latest`. |
 
     The following table lists the supported vLLM models:
 
@@ -79,15 +88,15 @@ Follow these steps to run the vLLM server or launch benchmarks on Gaudi using Do
     | ibm-granite/granite-8b-code-instruct-4k   | 1                     |
     | ibm-granite/granite-20b-code-instruct-8k  | 1                     |
 
-4. Set the selected environment variables using the following example as a reference.
+5. Set the selected environment variables using the following example as a reference.
 
     ```bash
     MODEL="Qwen/Qwen2.5-14B-Instruct" \
     HF_TOKEN="<your huggingface token>" \
-    DOCKER_IMAGE="vault.habana.ai/gaudi-docker/{{ VERSION }}/ubuntu24.04/habanalabs/vllm-plugin-{{ PT_VERSION }}:latest"
+    DOCKER_IMAGE="vault.habana.ai/gaudi-docker/{{ VERSION }}/ubuntu24.04/habanalabs/vllm-{{ VLLM_VERSION }}-ptupstream-{{ PT_VERSION }}:latest"
     ```
 
-5. Run the vLLM server using Docker Compose.
+6. Run the vLLM server using Docker Compose.
 
     ```bash
     docker compose up

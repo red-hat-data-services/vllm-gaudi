@@ -83,17 +83,28 @@ class ExponentialBucketingStrategy():
 
     def get_decode_cfgs(self, max_num_seqs, block_size, max_num_batched_tokens, max_model_len, max_blocks):
         self.check_for_user_flags('decode')
-        prefix_caching = get_config().prefix_caching
         use_contiguous_pa = get_config().use_contiguous_pa
 
         # cfgs shape: [min, step, max, limit]
         decode_bs_limit = math.ceil(math.log2(max_num_seqs)) + 1
         decode_bs_bucket_cfg = [1, 2, max_num_seqs, decode_bs_limit]
         decode_query_bucket_cfg = [1, 1, 1, 1]
-        max_decode_block_limit = math.ceil(math.log2(max_blocks)) + 1
-        max_factor = int(max_blocks * max_num_seqs // 4)
-        max_decode_blocks = max_blocks if use_contiguous_pa else \
-                            min((max_model_len // block_size * max_num_seqs), max_factor)
+        # With non-contiguous PA, total block references across all sequences
+        # can exceed physical num_hpu_blocks (same physical block appears in
+        # multiple sequence block tables).  Scale with both context
+        # length and batch size so prepared buckets cover long-context
+        # prefix-sharing scenarios and avoid costly HPU graph recompilation.
+        # The min() prevents excessive warmup when model_len is very large,
+        # and the outer max() guarantees at least 3x headroom for small configs.
+        if use_contiguous_pa:
+            max_decode_blocks = max_blocks
+        else:
+            blocks_per_seq = math.ceil(max_model_len / block_size)
+            max_decode_blocks = max(
+                min(blocks_per_seq * max_num_seqs, max_blocks * max_num_seqs // 3),
+                max_blocks * 3,
+            )
+        max_decode_block_limit = math.ceil(math.log2(max_decode_blocks)) + 1
         decode_block_bucket_cfg = [1, max_num_seqs, max_decode_blocks, max_decode_block_limit]
 
         msg = ("Decode bucket config (min, step, max_warmup, limit) "
