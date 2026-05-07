@@ -63,7 +63,7 @@ Follow these steps to run the vLLM server or launch benchmarks on Gaudi using Do
     | -------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
     | `MODEL`        | Preferred large language model. For a list of the available models, see the next table.                                                                                      |
     | `HF_TOKEN`     | Hugging Face token generated from <https://huggingface.co>.                                                                                                                  |
-    | `DOCKER_IMAGE` | Docker image name or URL for the vLLM Gaudi container. When using the Gaudi repository, make sure to select Docker images with the *vllm-plugin* prefix in the file name. |
+    | `DOCKER_IMAGE` | Docker image name or URL for the vLLM Gaudi container. When using the Intel® Gaudi® vault (`vault.habana.ai/gaudi-docker`), select an image with the `vllm-` prefix. The naming convention is `vllm-<VLLM_VERSION>-pt<TYPE>-<PT_VERSION>`, where `<TYPE>` is either `upstream` (upstream PyTorch build, default) or `fork` (Intel® Gaudi® PyTorch fork build). For example: `vllm-{{ VLLM_VERSION }}-ptupstream-{{ PT_VERSION }}:latest`. |
 
     The following table lists the supported vLLM models:
 
@@ -93,7 +93,7 @@ Follow these steps to run the vLLM server or launch benchmarks on Gaudi using Do
     ```bash
     MODEL="Qwen/Qwen2.5-14B-Instruct" \
     HF_TOKEN="<your huggingface token>" \
-    DOCKER_IMAGE="vault.habana.ai/gaudi-docker/{{ VERSION }}/ubuntu24.04/habanalabs/vllm-plugin-{{ PT_VERSION }}:latest"
+    DOCKER_IMAGE="vault.habana.ai/gaudi-docker/{{ VERSION }}/ubuntu24.04/habanalabs/vllm-{{ VLLM_VERSION }}-ptupstream-{{ PT_VERSION }}:latest"
     ```
 
 6. Run the vLLM server using Docker Compose.
