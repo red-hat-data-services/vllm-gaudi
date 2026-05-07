@@ -4,7 +4,6 @@ from vllm.assets.image import ImageAsset
 from vllm.assets.video import VideoAsset
 from vllm.multimodal.image import convert_image_mode
 from vllm.multimodal.utils import encode_image_url, encode_video_url
-from dataclasses import asdict
 from typing import Union, Any
 from PIL import Image
 from dataclasses import dataclass
@@ -76,9 +75,6 @@ def run_model(model_name: str, inputs: Union[dict, list[dict]], modality: str, *
     #    "fps": 1,
     # }
     passed_mm_processor_kwargs = extra_engine_args.get("mm_processor_kwargs", {})
-    passed_mm_processor_kwargs.setdefault("min_pixels", 28 * 28)
-    passed_mm_processor_kwargs.setdefault("max_pixels", 1280 * 28 * 28)
-    passed_mm_processor_kwargs.setdefault("fps", 1)
     extra_engine_args.update({"mm_processor_kwargs": passed_mm_processor_kwargs})
 
     extra_engine_args.setdefault("max_model_len", 32768)
@@ -92,8 +88,7 @@ def run_model(model_name: str, inputs: Union[dict, list[dict]], modality: str, *
 
     engine_args = EngineArgs(model=model_name, **extra_engine_args)
 
-    engine_args = asdict(engine_args)
-    llm = LLM(**engine_args)
+    llm = LLM.from_engine_args(engine_args)
 
     outputs = llm.chat(
         inputs,
