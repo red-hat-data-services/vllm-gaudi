@@ -16,8 +16,8 @@ ARG PT_MODULES_REPO_NAME=gaudi-pt-modules
 ARG PT_PACKAGE_NAME_NON_DEFAULT_PYTHON_SUBSTRING=
 ARG PYPI_INDEX_URL="https://pypi.org/simple/"
 ARG HABANA_RPM_REPO_PATH="rhel/9/${OS_VERSION}"
-ARG VLLM_GAUDI_COMMIT=v0.19.0
-ARG VLLM_PROJECT_COMMIT=v0.19.0
+ARG VLLM_GAUDI_COMMIT=v0.21.0
+ARG VLLM_PROJECT_COMMIT=v0.21.0
 ARG VLLM_REPO="https://github.com/vllm-project/vllm.git"
 ARG VLLM_GAUDI_REPO="https://github.com/vllm-project/vllm-gaudi.git"
 
@@ -213,7 +213,7 @@ RUN set -e && \
     git remote add upstream $VLLM_REPO && \
     git fetch upstream --tags && \
     git checkout ${VLLM_PROJECT_COMMIT} && \
-    pip install --no-cache-dir -r <(sed '/^torch/d' requirements/build.txt) && \
+    pip install --no-cache-dir -r <(sed '/^torch/d' requirements/build/cuda.txt) && \
     if [ "${VLLM_GAUDI_COMMIT}" != "main" ]; then \
     export SETUPTOOLS_SCM_PRETEND_VERSION=${VLLM_GAUDI_COMMIT#v}; \
     fi && \
